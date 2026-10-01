@@ -44,6 +44,7 @@ def init_db():
             group_id INTEGER DEFAULT NULL,
             last_video_id INTEGER DEFAULT NULL,
             sort_order INTEGER DEFAULT 0,
+            thumbs_asked INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
@@ -59,6 +60,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE collections ADD COLUMN sort_order INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE collections ADD COLUMN thumbs_asked INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
     cursor.execute("""
@@ -99,7 +104,8 @@ def add_collection(name: str, folder_path: str, cover_path: Optional[str] = None
 
 def update_collection(collection_id: int, **kwargs):
     """更新视频集信息"""
-    allowed = {"name", "folder_path", "cover_path", "last_video_id", "group_id"}
+    allowed = {"name", "folder_path", "cover_path", "last_video_id",
+               "group_id", "thumbs_asked"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return

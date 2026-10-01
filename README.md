@@ -3,7 +3,7 @@
 # 视频集播放器（Windows 桌面版）
 #该软件由AI辅助完成
 
-**当前版本：1.2.0**
+**当前版本：1.3.0**
 
 > Android 版见另一仓库 [https://github.com/gugugagagua/Video-player]
 

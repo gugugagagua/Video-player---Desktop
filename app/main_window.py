@@ -1,13 +1,13 @@
 """主窗口 - 组合各组件构成完整界面"""
 
-from PyQt6.QtCore import Qt, QCoreApplication, QTimer, QEvent
+from PyQt6.QtCore import Qt, QSize, QCoreApplication, QTimer, QEvent
 from PyQt6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QFileDialog, QMessageBox, QMenuBar, QLabel,
-    QLineEdit,
+    QLineEdit, QPushButton, QProgressDialog,
 )
 
 from app import database as db
@@ -21,7 +21,7 @@ from app import theme
 from app import icons
 from app import i18n
 from app import frame_provider
-from app import frame_provider
+from app import thumb_strip
 
 
 class MainWindow(QMainWindow):
@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_player()
         self._setup_menu()
+        self._setup_preload()
         self._load_collections()
 
     def _init_db(self):
@@ -87,6 +88,17 @@ class MainWindow(QMainWindow):
         self._search_box.setStyleSheet(theme.search_box_qss(t))
         self._search_box.textChanged.connect(self._on_search_changed)
         header_layout.addWidget(self._search_box)
+
+        # 预加载预览图按钮
+        self._preload_btn = QPushButton()
+        self._preload_btn.setFixedSize(34, 34)
+        self._preload_btn.setIcon(icons.make_icon("download", t.text, 20))
+        self._preload_btn.setIconSize(QSize(20, 20))
+        self._preload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preload_btn.setToolTip(i18n.tr("preload_tip"))
+        self._preload_btn.setStyleSheet(theme.btn_style_qss(t))
+        self._preload_btn.clicked.connect(lambda: self._preload_all_strips(None))
+        header_layout.addWidget(self._preload_btn)
 
         home_layout.addWidget(header_bar)
 
@@ -269,6 +281,11 @@ class MainWindow(QMainWindow):
         import_action.triggered.connect(self._manual_import)
         file_menu.addAction(import_action)
 
+        preload_action = QAction(icons.make_icon("download", t.text, 18),
+                                 i18n.tr("menu_preload"), self)
+        preload_action.triggered.connect(lambda: self._preload_all_strips(None))
+        file_menu.addAction(preload_action)
+
         exit_action = QAction(icons.make_icon("close", t.text, 18), i18n.tr("menu_exit"), self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
@@ -329,6 +346,9 @@ class MainWindow(QMainWindow):
         self._header.setText(i18n.tr("app_name"))
         self._search_box.setPlaceholderText(i18n.tr("search_placeholder"))
         self._back_btn.setText(i18n.tr("back_home"))
+        self._preload_btn.setToolTip(i18n.tr("preload_tip"))
+        self._preload_dialog.setWindowTitle(i18n.tr("preload_title"))
+        self._preload_dialog.setCancelButtonText(i18n.tr("cancel"))
         self._setup_menu()
         if self._search_box.text().strip():
             self._grid.load_search(self._search_box.text())
@@ -342,6 +362,79 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"{i18n.tr('app_name')} - {self._current_video_name}")
         else:
             self.setWindowTitle(i18n.tr("app_name"))
+
+    # ─── 预览图预加载 ────────────────────────────────────
+
+    def _setup_preload(self):
+        """批量生成预览图的进度条（非模态，可取消）"""
+        dlg = QProgressDialog(self)
+        dlg.setWindowTitle(i18n.tr("preload_title"))
+        dlg.setLabelText(i18n.tr("preload_label", name="", percent=0, done=0, total=0))
+        dlg.setCancelButtonText(i18n.tr("cancel"))
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setRange(0, 100)
+        dlg.setValue(0)
+        dlg.reset()
+        dlg.canceled.connect(frame_provider.cancel_preload)
+        self._preload_dialog = dlg
+
+        frame_provider.signals.strip_progress.connect(self._on_strip_progress)
+        frame_provider.signals.strip_finished.connect(self._on_strip_finished)
+
+    def _collect_preload_items(self, collection_id=None):
+        """收集要生成预览图的视频：[(路径, 时长毫秒, 显示名), ...]"""
+        collections = db.get_all_collections()
+        if collection_id is not None:
+            collections = [c for c in collections if c["id"] == collection_id]
+        items = []
+        for col in collections:
+            for v in db.get_videos_by_collection(col["id"]):
+                items.append((v["file_path"],
+                              int((v.get("duration") or 0) * 1000),
+                              v["file_name"]))
+        return items
+
+    def _preload_all_strips(self, collection_id=None):
+        """在后台批量生成预览图；collection_id 为 None 表示整个库"""
+        if frame_provider.preload_active():
+            QMessageBox.information(self, i18n.tr("tip"), i18n.tr("preload_busy"))
+            return
+        items = self._collect_preload_items(collection_id)
+        if not items:
+            QMessageBox.information(self, i18n.tr("tip"), i18n.tr("preload_nothing"))
+            return
+        self._preload_dialog.setValue(0)
+        self._preload_dialog.show()
+        frame_provider.preload_strips(items)
+
+    def _ask_preload(self, collection_id: int, name: str):
+        """首次打开视频集时询问是否预生成预览图"""
+        reply = QMessageBox.question(
+            self, i18n.tr("preload_ask_title"),
+            i18n.tr("preload_ask_body", name=name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._preload_all_strips(collection_id)
+
+    def _on_strip_progress(self, done_videos, total_videos,
+                           cur_done, cur_total, name):
+        if total_videos <= 0:
+            return
+        ratio = (cur_done / cur_total) if cur_total else 0.0
+        percent = int(min(1.0, (done_videos + ratio) / total_videos) * 100)
+        self._preload_dialog.setValue(percent)
+        self._preload_dialog.setLabelText(
+            i18n.tr("preload_label", name=name, percent=percent,
+                    done=done_videos, total=total_videos))
+
+    def _on_strip_finished(self, completed: bool):
+        self._preload_dialog.hide()
+        self._preload_dialog.reset()
 
     def _select_audio_device(self, device_id: str):
         self._player.set_audio_output(device_id)
@@ -403,6 +496,16 @@ class MainWindow(QMainWindow):
             target = self._playlist.current_video
         if target:
             self._play_video(target["id"])
+
+        # 首次打开该视频集 → 询问是否预生成全部预览图
+        collections = db.get_all_collections()
+        col = next((c for c in collections if c["id"] == collection_id), None)
+        if col and not col.get("thumbs_asked"):
+            db.update_collection(collection_id, thumbs_asked=1)
+            QTimer.singleShot(
+                600,
+                lambda cid=collection_id, name=col["name"]: self._ask_preload(cid, name),
+            )
 
     def _play_video_from_search(self, collection_id: int, video_id: int):
         """从搜索结果直接跳转到指定视频播放"""

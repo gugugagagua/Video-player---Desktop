@@ -112,7 +112,8 @@ class ThumbStrip:
                 return False
             with self._lock:
                 self.image = img
-                self.done = self.count
+                # 支持断点续传：已生成多少格就恢复多少格
+                self.done = min(int(meta.get("done", self.count)), self.count)
             return True
         except Exception:
             return False
@@ -132,6 +133,7 @@ class ThumbStrip:
                     "key": self.key,
                     "interval_ms": self.interval_ms,
                     "count": self.count,
+                    "done": self.done,
                     "tile_w": TILE_W,
                     "tile_h": TILE_H,
                     "cols": self.cols,
@@ -177,3 +179,36 @@ class ThumbStrip:
             x = (index % self.cols) * TILE_W
             y = (index // self.cols) * TILE_H
             return QPixmap.fromImage(self.image.copy(x, y, TILE_W, TILE_H))
+
+
+# ─── 磁盘探测（不加载图片，只读元信息，很快）────────────────
+
+def read_meta(video_path: str, duration_ms: int) -> Optional[dict]:
+    """读取磁盘上的元信息；不存在或与当前参数不符则返回 None"""
+    strip = ThumbStrip(video_path, duration_ms)
+    if strip.count <= 0:
+        return None
+    try:
+        with open(strip.meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        return None
+    if (meta.get("key") == strip.key
+            and meta.get("interval_ms") == strip.interval_ms
+            and meta.get("count") == strip.count):
+        return meta
+    return None
+
+
+def cached_count(video_path: str, duration_ms: int) -> int:
+    """磁盘上已生成到第几格；无缓存返回 -1"""
+    meta = read_meta(video_path, duration_ms)
+    if meta is None:
+        return -1
+    return int(meta.get("done", 0))
+
+
+def is_cached(video_path: str, duration_ms: int) -> bool:
+    """磁盘上是否已有完整的雪碧图"""
+    meta = read_meta(video_path, duration_ms)
+    return bool(meta is not None and int(meta.get("done", 0)) >= int(meta.get("count", 0)))

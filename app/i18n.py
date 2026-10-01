@@ -50,6 +50,44 @@ STRINGS: dict = {
     "theme_light": {"zh": " 浅色模式", "en": " Light Mode"},
     "menu_audio": {"zh": "音频", "en": "Audio"},
     "menu_language": {"zh": "语言", "en": "Language"},
+
+    # 预览图预加载
+    "menu_preload": {"zh": "预加载全部预览图", "en": "Preload All Thumbnails"},
+    "preload_tip": {
+        "zh": "预加载全部预览图\n生成后悬停进度条可即时预览画面",
+        "en": "Preload all thumbnails\nOnce generated, hovering the progress bar previews instantly",
+    },
+    "preload_title": {"zh": "生成预览图", "en": "Generating Thumbnails"},
+    "preload_ask_title": {"zh": "预加载预览图", "en": "Preload Thumbnails"},
+    "preload_ask_body": {
+        "zh": "是否为「{name}」生成全部预览图？\n\n"
+              "生成后悬停进度条即可即时预览画面，无需等待解码。\n"
+              "每个视频约需半分钟，只在首次生成，之后永久复用。",
+        "en": "Generate all thumbnails for \"{name}\"?\n\n"
+              "Afterwards, hovering the progress bar previews frames instantly.\n"
+              "Takes about half a minute per video, done once and cached forever.",
+    },
+    "preload_label": {
+        "zh": "正在生成预览图：{name}\n{percent}%（{done}/{total} 个视频）",
+        "en": "Generating thumbnails: {name}\n{percent}% ({done}/{total} videos)",
+    },
+    "preload_done": {
+        "zh": "预览图已全部生成完毕。",
+        "en": "All thumbnails have been generated.",
+    },
+    "preload_cancelled": {
+        "zh": "已取消生成预览图。",
+        "en": "Thumbnail generation cancelled.",
+    },
+    "preload_nothing": {
+        "zh": "没有需要生成的视频。",
+        "en": "There are no videos to process.",
+    },
+    "preload_busy": {
+        "zh": "正在生成预览图，请稍候…",
+        "en": "Thumbnail generation is already running…",
+    },
+    "cancel": {"zh": "取消", "en": "Cancel"},
     "lang_zh": {"zh": "简体中文", "en": "简体中文"},
     "lang_en": {"zh": "English", "en": "English"},
 
@@ -182,20 +220,59 @@ def save_language(lang: str):
     _settings.sync()
 
 
+_qt_translator = None
+
+
+def _install_qt_translator(lang: str):
+    """加载 Qt 自带翻译，让 QMessageBox 等标准对话框的按钮也跟着变
+
+    否则中文界面下的确认框仍然显示 Yes / No。
+    """
+    global _qt_translator
+    if lang != ZH:
+        return
+    try:
+        from PyQt6.QtCore import QLibraryInfo, QTranslator
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+        translator = QTranslator()
+        if not translator.load("qtbase_zh_CN", path):
+            return
+        app.installTranslator(translator)
+        _qt_translator = translator          # 必须持有引用
+    except Exception:
+        pass
+
+
 def init() -> str:
     """启动时初始化语言"""
     global _current
     _current = load_language()
+    _install_qt_translator(_current)
     return _current
 
 
 def set_language(lang: str):
     """切换语言并持久化"""
-    global _current
+    global _current, _qt_translator
     if lang not in (ZH, EN):
         return
     _current = lang
     save_language(lang)
+    if lang != ZH and _qt_translator is not None:
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.removeTranslator(_qt_translator)
+        except Exception:
+            pass
+        _qt_translator = None
+    _install_qt_translator(lang)
 
 
 def current() -> str:

@@ -2,7 +2,7 @@
 # Video Set Player (Windows Desktop)
 #This software was developed with AI assistance
 
-**Current version: 1.2.0**
+**Current version: 1.3.0**
 
 > The Android version lives in a separate repository [https://github.com/gugugagagua/Video-player]
 

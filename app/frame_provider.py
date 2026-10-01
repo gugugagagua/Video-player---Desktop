@@ -17,11 +17,7 @@
 """
 
 import heapq
-import threading
-import time
-from collections import OrderedDict
-from typing import Optional, Tuple
-import heapq
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -61,6 +57,10 @@ class _Signals(QObject):
     """跨线程结果载体。模块级常驻，避免回调对象被提前回收。"""
 
     ready = pyqtSignal(object, int)  # (QImage | None, token)
+    # 批量预生成进度：(已完成视频数, 总视频数, 当前视频已完成格数, 当前视频总格数, 名称)
+    strip_progress = pyqtSignal(int, int, int, int, str)
+    # 批量预生成结束：(是否全部完成)
+    strip_finished = pyqtSignal(bool)
 
 
 # 供外部 connect
@@ -146,6 +146,15 @@ class _Worker(threading.Thread):
         self._strip_enabled = False
         self._strip_pending = None      # 因让路而挂起的生成任务
 
+        # 批量预生成
+        self._batch_queue: list = []    # [(path, duration_ms, name)]
+        self._batch_active = False
+        self._batch_total_videos = 0
+        self._batch_done_videos = 0
+        self._batch_cur_total = 0
+        self._batch_cur_done = 0
+        self._batch_name = ""
+
         # 性能统计：用于自动收缩预加载窗口
         self._avg_decode_ms = 0.0
 
@@ -228,9 +237,20 @@ class _Worker(threading.Thread):
 
     # ── 雪碧图生成 ───────────────────────────────────────
 
+    def _probe_duration_ms(self, path: str) -> int:
+        """借已打开的解码器读出时长（毫秒）"""
+        cap = self._ensure_cap(path)
+        if cap is None:
+            return 0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        fps = self._fps or 25.0
+        if frames <= 0 or fps <= 0:
+            return 0
+        return int(frames / fps * 1000)
+
     def _process_strip(self, path: str, index: int, duration_ms: int):
         """生成一格缩略图；最低优先级，遇到悬停就让路"""
-        if not self._strip_enabled:
+        if not self._strip_enabled and not self._batch_active:
             return
         with self._cond:
             if self._has_pending_hover():
@@ -239,16 +259,24 @@ class _Worker(threading.Thread):
                 return
 
         if index < 0:
+            # ── 初始化目标 ──────────────────────────────
+            if duration_ms <= 0:
+                duration_ms = self._probe_duration_ms(path)
             strip = thumb_strip.ThumbStrip(path, duration_ms)
-            if strip.load():
-                # 磁盘已有，直接可用，无需生成
-                self._strip = strip
-                self._strip_path = path
-                return
             self._strip = strip
             self._strip_path = path
-            if strip.count > 0:
-                self._push(PRIORITY_STRIP, path, 0, duration_ms)
+            start = strip.done if strip.load() else 0   # 支持断点续传
+
+            if self._batch_active:
+                self._batch_cur_total = strip.count
+                self._batch_cur_done = start
+                self._emit_batch_progress()
+
+            if start < strip.count:
+                self._push(PRIORITY_STRIP, path, start, duration_ms)
+            else:
+                strip.save()
+                self._finish_strip_target()
             return
 
         strip = self._strip
@@ -256,16 +284,85 @@ class _Worker(threading.Thread):
             return
         if index >= strip.count:
             strip.save()
+            self._finish_strip_target()
             return
 
         frame = self._decode(path, strip.time_at(index), max_width=thumb_strip.TILE_W)
         if frame is not None and strip.put_tile(index, frame):
             strip.save()
 
+        if self._batch_active:
+            self._batch_cur_done = index + 1
+            self._emit_batch_progress()
+
         if index + 1 < strip.count:
             self._push(PRIORITY_STRIP, path, index + 1, duration_ms)
         else:
             strip.save()
+            self._finish_strip_target()
+
+    def _finish_strip_target(self):
+        """当前雪碧图生成完毕；批量队列还有就继续下一个"""
+        if not self._batch_active:
+            return
+        self._batch_done_videos += 1
+        self._emit_batch_progress()
+        if self._batch_queue:
+            path, duration_ms, name = self._batch_queue.pop(0)
+            self._batch_name = name
+            self._push(PRIORITY_STRIP, path, -1, duration_ms)
+            with self._cond:
+                self._cond.notify()
+            return
+        # 全部完成
+        self._batch_active = False
+        self._batch_cur_total = 0
+        self._batch_cur_done = 0
+        signals.strip_finished.emit(True)
+
+    def _emit_batch_progress(self):
+        if not self._batch_active:
+            return
+        signals.strip_progress.emit(
+            self._batch_done_videos, self._batch_total_videos,
+            self._batch_cur_done, self._batch_cur_total,
+            self._batch_name,
+        )
+
+    def start_batch(self, items):
+        """开始批量预生成。items = [(path, duration_ms, name), ...]"""
+        with self._cond:
+            self._jobs = [j for j in self._jobs if j[0] != PRIORITY_STRIP]
+            heapq.heapify(self._jobs)
+            self._strip = None
+            self._strip_path = ""
+            self._strip_pending = None
+            self._batch_queue = list(items)
+            self._batch_total_videos = len(self._batch_queue)
+            self._batch_done_videos = 0
+            self._batch_cur_total = 0
+            self._batch_cur_done = 0
+            self._batch_name = ""
+            self._batch_active = bool(self._batch_queue)
+            if self._batch_active:
+                path, duration_ms, name = self._batch_queue.pop(0)
+                self._batch_name = name
+                self._push(PRIORITY_STRIP, path, -1, duration_ms)
+                self._cond.notify()
+
+    def cancel_batch(self):
+        """取消批量预生成（当前这一格生成完就停）"""
+        with self._cond:
+            if not self._batch_active:
+                return
+            self._batch_queue.clear()
+            self._batch_active = False
+            self._jobs = [j for j in self._jobs if j[0] != PRIORITY_STRIP]
+            heapq.heapify(self._jobs)
+        signals.strip_finished.emit(False)
+
+    def batch_active(self) -> bool:
+        return self._batch_active
 
     def _resume_strip(self):
         """把因让路而挂起的雪碧图任务重新排队"""
@@ -451,11 +548,13 @@ class _Worker(threading.Thread):
             self._jobs.clear()
             self._reset_requested = True
             if not path:
-                # 离开播放页：停止雪碧图生成并释放内存
-                self._strip = None
-                self._strip_path = ""
-                self._strip_pending = None
+                # 离开播放页：停止隐式雪碧图生成并释放内存
+                # （用户主动发起的批量预生成不受影响，继续跑完）
                 self._strip_enabled = False
+                if not self._batch_active:
+                    self._strip = None
+                    self._strip_path = ""
+                    self._strip_pending = None
             self._cond.notify()
 
     def set_preload(self, enabled: bool):
@@ -531,6 +630,29 @@ def tile_at(video_path: str, position_ms: int):
     if strip is None:
         return None
     return strip.tile(position_ms)
+
+
+def preload_strips(items):
+    """批量预生成缩略图。items = [(视频路径, 时长毫秒, 显示名), ...]
+
+    时长传 0 时会由后台自行探测。生成进度通过 signals.strip_progress 上报，
+    全部结束（或取消）通过 signals.strip_finished 上报。
+    """
+    items = [(p, int(d or 0), n or os.path.basename(p)) for (p, d, n) in items]
+    if not items:
+        signals.strip_finished.emit(True)
+        return
+    _worker.start_batch(items)
+
+
+def cancel_preload():
+    """取消批量预生成"""
+    _worker.cancel_batch()
+
+
+def preload_active() -> bool:
+    """是否正在批量预生成"""
+    return _worker.batch_active()
 
 
 def set_active_video(video_path: str):
