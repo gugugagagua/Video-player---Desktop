@@ -25,9 +25,7 @@ from app import prefs
 TILE_W = 160                # 单格宽
 TILE_H = 90                 # 单格高
 COLS = 10                   # 每行格数
-MAX_TILES = 300             # 兜底默认值，实际由 prefs.thumb_max_tiles() 决定
-MIN_INTERVAL_MS = 2000      # 最小间隔
-MAX_INTERVAL_MS = 15000     # 最大间隔
+MAX_TILES = 1200            # 硬上限：超长视频会自动放宽间隔，避免雪碧图过大
 FLUSH_EVERY = 30            # 每生成多少格落盘一次
 
 
@@ -59,17 +57,18 @@ class ThumbStrip:
         self.key = _file_key(video_path)
         self._lock = threading.Lock()
 
+        # 间隔由用户在「设置 → 预览图间隔」里选，默认 10 秒
+        self.interval_ms = prefs.thumb_interval_ms()
         if self.duration_ms <= 0:
-            self.interval_ms = MIN_INTERVAL_MS
             self.count = 0
         else:
-            max_tiles = prefs.thumb_max_tiles()
-            step = self.duration_ms // max_tiles
-            self.interval_ms = max(MIN_INTERVAL_MS, min(MAX_INTERVAL_MS, step))
             # 向上取整：最后一格必须落在视频长度内，否则取不到帧
-            self.count = min(max_tiles,
-                             max(1, (self.duration_ms + self.interval_ms - 1)
-                                 // self.interval_ms))
+            count = (self.duration_ms + self.interval_ms - 1) // self.interval_ms
+            if count > MAX_TILES:
+                # 超长视频自动放宽间隔，把格数压回上限
+                self.interval_ms = (self.duration_ms + MAX_TILES - 1) // MAX_TILES
+                count = (self.duration_ms + self.interval_ms - 1) // self.interval_ms
+            self.count = max(1, count)
 
         self.cols = COLS
         self.rows = (self.count + self.cols - 1) // self.cols if self.count else 0

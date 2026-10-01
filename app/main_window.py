@@ -325,18 +325,18 @@ class MainWindow(QMainWindow):
         self._lang_en_action.triggered.connect(lambda: self._switch_language(i18n.EN))
         lang_menu.addAction(self._lang_en_action)
 
-        # 设置：预览图精细度
+        # 设置：预览图抽帧间隔
         settings_menu = menubar.addMenu(i18n.tr("menu_settings"))
-        quality_menu = settings_menu.addMenu(i18n.tr("menu_thumb_quality"))
-        group = QActionGroup(quality_menu)
+        interval_menu = settings_menu.addMenu(i18n.tr("menu_thumb_interval"))
+        group = QActionGroup(interval_menu)
         group.setExclusive(True)
-        for name, _tiles in prefs.THUMB_PRESETS:
-            act = QAction(i18n.tr(f"thumb_quality_{name}"), quality_menu)
+        for name, _ms in prefs.THUMB_PRESETS:
+            act = QAction(i18n.tr(f"thumb_interval_{name}"), interval_menu)
             act.setCheckable(True)
-            act.setChecked(prefs.thumb_quality() == name)
-            act.triggered.connect(lambda checked, n=name: self._set_thumb_quality(n))
+            act.setChecked(prefs.thumb_interval_name() == name)
+            act.triggered.connect(lambda checked, n=name: self._set_thumb_interval(n))
             group.addAction(act)
-            quality_menu.addAction(act)
+            interval_menu.addAction(act)
 
         # 音频输出设备
         audio_menu = menubar.addMenu(i18n.tr("menu_audio"))
@@ -407,16 +407,16 @@ class MainWindow(QMainWindow):
     def _set_preload_visible(self, visible: bool):
         self.statusBar().setVisible(visible)
 
-    def _set_thumb_quality(self, name: str):
-        """切换预览图精细度"""
-        if prefs.thumb_quality() == name:
+    def _set_thumb_interval(self, name: str):
+        """切换预览图抽帧间隔"""
+        if prefs.thumb_interval_name() == name:
             return
-        prefs.set_thumb_quality(name)
-        frame_provider.reset_strips()   # 丢弃已加载的雪碧图，改用新精度
+        prefs.set_thumb_interval(name)
+        frame_provider.reset_strips()   # 丢弃已加载的雪碧图，改用新间隔
         QMessageBox.information(
             self, i18n.tr("tip"),
-            i18n.tr("thumb_quality_changed",
-                    name=i18n.tr(f"thumb_quality_{name}")))
+            i18n.tr("thumb_interval_changed",
+                    name=i18n.tr(f"thumb_interval_{name}")))
 
     def _collect_preload_items(self, collection_id=None):
         """收集要生成预览图的视频：[(路径, 时长毫秒, 显示名), ...]"""
