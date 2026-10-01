@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# Inno Setup 安装包输出
+installer_output/
+
+# 运行期数据（数据库 / 封面缓存）
+data/
+.covers/
+
+# IDE
+.idea/
+.vscode/
+.codebuddy/
