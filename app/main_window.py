@@ -20,6 +20,7 @@ from app.widgets.video_list_widget import VideoListWidget
 from app import theme
 from app import icons
 from app import i18n
+from app import frame_provider
 
 
 class MainWindow(QMainWindow):
@@ -374,8 +375,7 @@ class MainWindow(QMainWindow):
         else:
             self._grid.load()
         self._toolbar.refresh_theme()
-        if self._playlist:
-            self._video_list.load_collection(self._playlist._collection_id)
+        self._video_list.refresh_theme()
 
     def _load_collections(self):
         self._grid.load()
@@ -565,4 +565,5 @@ class MainWindow(QMainWindow):
         QCoreApplication.processEvents()  # 刷新事件队列，拿到最新播放位置
         self._save_current_position()
         self._player.stop()
+        frame_provider.shutdown()  # 停止后台抽帧并释放解码器
         event.accept()

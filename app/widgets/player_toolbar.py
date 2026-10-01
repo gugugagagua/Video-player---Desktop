@@ -1,6 +1,6 @@
 """播放控制工具栏 - 播放/暂停、音量、进度、倍速、全屏"""
 
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QElapsedTimer, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
 from PyQt6.QtGui import QFont, QIcon, QAction, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QSlider, QLabel,
@@ -26,7 +26,13 @@ SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 
 
 class SeekPreview(QWidget):
-    """进度条悬停预览浮窗：上方目标画面，下方时间"""
+    """进度条悬停预览浮窗：上方目标画面，下方时间
+
+    尺寸固定不变——尺寸抖动会触发顶层窗口重设大小，是移动时的性能杀手。
+    """
+
+    IMG_W = 240
+    IMG_H = 135
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.ToolTip)
@@ -36,28 +42,34 @@ class SeekPreview(QWidget):
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
         self._img = QLabel()
-        self._img.setFixedSize(240, 135)
+        self._img.setFixedSize(self.IMG_W, self.IMG_H)
         self._img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._img.setStyleSheet("background: #000; border-radius: 4px;")
+        self._img.setStyleSheet("background: #000; color: #888; border-radius: 4px;")
+        self._img.setText("…")
         lay.addWidget(self._img, alignment=Qt.AlignmentFlag.AlignCenter)
         self._time = QLabel("00:00")
+        self._time.setFixedWidth(self.IMG_W)  # 固定宽度，布局尺寸恒定
         self._time.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._time.setStyleSheet("color: #fff; font-size: 12px; font-weight: bold;")
         lay.addWidget(self._time)
+        self.adjustSize()  # 只在初始化时算一次尺寸
 
-    def set_content(self, pixmap: QPixmap | None, text: str):
-        if pixmap is not None and not pixmap.isNull():
-            self._img.setPixmap(pixmap.scaled(
-                self._img.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            ))
-        else:
-            self._img.clear()
-            self._img.setText("…")
-            self._img.setStyleSheet("background: #000; color: #888; border-radius: 4px;")
-        self._time.setText(text)
-        self.adjustSize()
+    def set_image(self, image):
+        """设置目标画面（接受 QImage 或 QPixmap）"""
+        if image is None:
+            return
+        pixmap = image if isinstance(image, QPixmap) else QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return
+        self._img.setPixmap(pixmap.scaled(
+            self._img.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+
+    def set_time(self, text: str):
+        if self._time.text() != text:
+            self._time.setText(text)
 
 
 class PlayerToolbar(QWidget):
@@ -92,8 +104,11 @@ class PlayerToolbar(QWidget):
         # 悬停预览
         self._video_path: str = ""
         self._preview = SeekPreview(self)
-        self._preview_timer = QElapsedTimer()
-        self._preview_timer.start()
+        self._preview_token = 0
+        self._preview_bucket = -1
+        self._preview_ms = 0
+        self._preview_pos = None
+        frame_provider.signals.ready.connect(self._on_preview_frame)
         self._setup_ui()
         self._apply_theme_style()
 
@@ -264,6 +279,8 @@ class PlayerToolbar(QWidget):
         """设置当前视频路径，供悬停预览抽帧"""
         self._video_path = video_path or ""
         self._preview.hide()
+        self._preview_bucket = -1
+        self._preview_token += 1  # 让上一个视频的在途请求失效
 
     def eventFilter(self, obj, event):
         if obj is self._progress_slider:
@@ -289,21 +306,51 @@ class PlayerToolbar(QWidget):
             return
         pos = event.position().toPoint()
         ms = self._ms_at_x(pos.x())
+        self._preview_ms = ms
+
+        # 以下都是轻量操作：改文字、移动浮窗
         self._update_time_label_hover(ms)
-        # 节流：每 120ms 抽一帧，避免拖动时频繁解码
-        if self._preview_timer.elapsed() < 120 and self._preview.isVisible():
-            self._move_preview(pos)
-            return
-        self._preview_timer.restart()
-        pix = frame_provider.grab_frame(self._video_path, ms, max_width=240) if self._video_path else None
-        self._preview.set_content(pix, _format_time(ms))
+        self._preview.set_time(_format_time(ms))
         self._move_preview(pos)
-        self._preview.show()
+        if not self._preview.isVisible():
+            self._preview.show()
+
+        # 同一秒内不重复请求；命中缓存立即显示，否则后台抽帧后回调
+        bucket = ms // frame_provider.BUCKET_MS
+        if bucket == self._preview_bucket:
+            return
+        self._preview_bucket = bucket
+        self._preview_token += 1
+        cached = frame_provider.request_frame(self._video_path, ms, self._preview_token)
+        if cached is not None:
+            self._preview.set_image(cached)
+
+    def _on_preview_frame(self, image, token):
+        """后台抽帧完成回调（已在 GUI 线程）"""
+        if token != self._preview_token:
+            return  # 过期结果，直接丢弃
+        self._preview.set_image(image)
 
     def _move_preview(self, pos: QPoint):
-        global_pos = self._progress_slider.mapToGlobal(pos)
-        x = global_pos.x() - self._preview.width() // 2
-        y = global_pos.y() - self._preview.height() - 12
+        """横向跟随鼠标，纵向固定（锚定在进度条上方）"""
+        pw = self._preview.width()
+        # 横向：以鼠标为中心
+        mouse_global = self._progress_slider.mapToGlobal(pos)
+        x = mouse_global.x() - pw // 2
+        # 纵向：始终以进度条顶边为基准，不随鼠标纵向位置变化
+        slider_top = self._progress_slider.mapToGlobal(QPoint(0, 0)).y()
+        y = slider_top - self._preview.height() - 12
+
+        # 限制在主窗口范围内，避免贴边被裁掉
+        win = self.window()
+        if win is not None:
+            g = win.geometry()
+            x = max(g.left() + 4, min(x, g.right() - pw - 3))
+
+        # 位置没变就不调用 move（纵向移动鼠标时零窗口操作）
+        if (x, y) == self._preview_pos:
+            return
+        self._preview_pos = (x, y)
         self._preview.move(x, y)
 
     def _update_time_label_hover(self, ms: int):
