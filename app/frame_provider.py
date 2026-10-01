@@ -392,6 +392,15 @@ class _Worker(threading.Thread):
             return None
         return self._strip
 
+    def drop_strip(self):
+        """丢弃当前雪碧图（修改精细度后需要按新参数重建）"""
+        with self._cond:
+            self._jobs = [j for j in self._jobs if j[0] != PRIORITY_STRIP]
+            heapq.heapify(self._jobs)
+            self._strip = None
+            self._strip_path = ""
+            self._strip_pending = None
+
     # ── 解码 ─────────────────────────────────────────────
 
     def _ensure_cap(self, video_path: str):
@@ -648,6 +657,11 @@ def preload_strips(items):
 def cancel_preload():
     """取消批量预生成"""
     _worker.cancel_batch()
+
+
+def reset_strips():
+    """丢弃已加载的雪碧图（修改精细度后调用，下次使用时按新参数重建）"""
+    _worker.drop_strip()
 
 
 def preload_active() -> bool:

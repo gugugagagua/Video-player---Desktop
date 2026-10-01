@@ -9,17 +9,15 @@
 
 from typing import Optional
 
-from PyQt6.QtCore import QLocale, QSettings
+from PyQt6.QtCore import QLocale
 
-from app import paths
+from app import prefs
 
 
 ZH = "zh"
 EN = "en"
 
-# 语言设置文件（与 videos.db 同目录）
-_CONFIG_PATH = paths.data_file("settings.ini")
-_settings = QSettings(_CONFIG_PATH, QSettings.Format.IniFormat)
+# 语言设置键（实际存于 data/settings.ini，与其它偏好共用同一个文件）
 _KEY = "language"
 
 _current = ZH
@@ -50,6 +48,28 @@ STRINGS: dict = {
     "theme_light": {"zh": " 浅色模式", "en": " Light Mode"},
     "menu_audio": {"zh": "音频", "en": "Audio"},
     "menu_language": {"zh": "语言", "en": "Language"},
+    "menu_settings": {"zh": "设置", "en": "Settings"},
+    "menu_thumb_quality": {"zh": "预览图精细度", "en": "Thumbnail Quality"},
+    "thumb_quality_fine": {
+        "zh": "精细（最多 600 格）",
+        "en": "Fine (up to 600 tiles)",
+    },
+    "thumb_quality_standard": {
+        "zh": "标准（最多 300 格）",
+        "en": "Standard (up to 300 tiles)",
+    },
+    "thumb_quality_fast": {
+        "zh": "快速（最多 150 格）",
+        "en": "Fast (up to 150 tiles)",
+    },
+    "thumb_quality_changed": {
+        "zh": "预览图精细度已改为「{name}」。\n\n"
+              "已生成的预览图需要重新生成才会按新精细度显示，"
+              "可在「文件 → 预加载全部预览图」重新生成。",
+        "en": "Thumbnail quality is now \"{name}\".\n\n"
+              "Existing thumbnails need to be regenerated to match; "
+              "use File → Preload All Thumbnails.",
+    },
 
     # 预览图预加载
     "menu_preload": {"zh": "预加载全部预览图", "en": "Preload All Thumbnails"},
@@ -57,7 +77,6 @@ STRINGS: dict = {
         "zh": "预加载全部预览图\n生成后悬停进度条可即时预览画面",
         "en": "Preload all thumbnails\nOnce generated, hovering the progress bar previews instantly",
     },
-    "preload_title": {"zh": "生成预览图", "en": "Generating Thumbnails"},
     "preload_ask_title": {"zh": "预加载预览图", "en": "Preload Thumbnails"},
     "preload_ask_body": {
         "zh": "是否为「{name}」生成全部预览图？\n\n"
@@ -68,8 +87,12 @@ STRINGS: dict = {
               "Takes about half a minute per video, done once and cached forever.",
     },
     "preload_label": {
-        "zh": "正在生成预览图：{name}\n{percent}%（{done}/{total} 个视频）",
-        "en": "Generating thumbnails: {name}\n{percent}% ({done}/{total} videos)",
+        "zh": "正在生成预览图：{name}　{percent}%（{done}/{total} 个视频）",
+        "en": "Generating thumbnails: {name}  {percent}% ({done}/{total} videos)",
+    },
+    "preload_starting": {
+        "zh": "正在准备生成预览图…",
+        "en": "Preparing to generate thumbnails…",
     },
     "preload_done": {
         "zh": "预览图已全部生成完毕。",
@@ -82,10 +105,6 @@ STRINGS: dict = {
     "preload_nothing": {
         "zh": "没有需要生成的视频。",
         "en": "There are no videos to process.",
-    },
-    "preload_busy": {
-        "zh": "正在生成预览图，请稍候…",
-        "en": "Thumbnail generation is already running…",
     },
     "cancel": {"zh": "取消", "en": "Cancel"},
     "lang_zh": {"zh": "简体中文", "en": "简体中文"},
@@ -209,15 +228,14 @@ def detect_system_language() -> str:
 
 def load_language() -> str:
     """读取已保存的语言；没有则按系统语言推断"""
-    saved = _settings.value(_KEY, None)
+    saved = prefs.get(_KEY, None)
     if saved in (ZH, EN):
         return saved
     return detect_system_language()
 
 
 def save_language(lang: str):
-    _settings.setValue(_KEY, lang)
-    _settings.sync()
+    prefs.set_value(_KEY, lang)
 
 
 _qt_translator = None

@@ -1,13 +1,13 @@
 """主窗口 - 组合各组件构成完整界面"""
 
 from PyQt6.QtCore import Qt, QSize, QCoreApplication, QTimer, QEvent
-from PyQt6.QtGui import QAction, QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QShortcut
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QFileDialog, QMessageBox, QMenuBar, QLabel,
-    QLineEdit, QPushButton, QProgressDialog,
+    QLineEdit, QPushButton, QProgressBar,
 )
 
 from app import database as db
@@ -20,6 +20,7 @@ from app.widgets.video_list_widget import VideoListWidget
 from app import theme
 from app import icons
 from app import i18n
+from app import prefs
 from app import frame_provider
 from app import thumb_strip
 
@@ -324,6 +325,19 @@ class MainWindow(QMainWindow):
         self._lang_en_action.triggered.connect(lambda: self._switch_language(i18n.EN))
         lang_menu.addAction(self._lang_en_action)
 
+        # 设置：预览图精细度
+        settings_menu = menubar.addMenu(i18n.tr("menu_settings"))
+        quality_menu = settings_menu.addMenu(i18n.tr("menu_thumb_quality"))
+        group = QActionGroup(quality_menu)
+        group.setExclusive(True)
+        for name, _tiles in prefs.THUMB_PRESETS:
+            act = QAction(i18n.tr(f"thumb_quality_{name}"), quality_menu)
+            act.setCheckable(True)
+            act.setChecked(prefs.thumb_quality() == name)
+            act.triggered.connect(lambda checked, n=name: self._set_thumb_quality(n))
+            group.addAction(act)
+            quality_menu.addAction(act)
+
         # 音频输出设备
         audio_menu = menubar.addMenu(i18n.tr("menu_audio"))
         for name, dev_id in self._player.list_audio_outputs():
@@ -347,8 +361,7 @@ class MainWindow(QMainWindow):
         self._search_box.setPlaceholderText(i18n.tr("search_placeholder"))
         self._back_btn.setText(i18n.tr("back_home"))
         self._preload_btn.setToolTip(i18n.tr("preload_tip"))
-        self._preload_dialog.setWindowTitle(i18n.tr("preload_title"))
-        self._preload_dialog.setCancelButtonText(i18n.tr("cancel"))
+        self._preload_cancel.setText(i18n.tr("cancel"))
         self._setup_menu()
         if self._search_box.text().strip():
             self._grid.load_search(self._search_box.text())
@@ -366,23 +379,44 @@ class MainWindow(QMainWindow):
     # ─── 预览图预加载 ────────────────────────────────────
 
     def _setup_preload(self):
-        """批量生成预览图的进度条（非模态，可取消）"""
-        dlg = QProgressDialog(self)
-        dlg.setWindowTitle(i18n.tr("preload_title"))
-        dlg.setLabelText(i18n.tr("preload_label", name="", percent=0, done=0, total=0))
-        dlg.setCancelButtonText(i18n.tr("cancel"))
-        dlg.setWindowModality(Qt.WindowModality.NonModal)
-        dlg.setMinimumDuration(0)
-        dlg.setAutoClose(False)
-        dlg.setAutoReset(False)
-        dlg.setRange(0, 100)
-        dlg.setValue(0)
-        dlg.reset()
-        dlg.canceled.connect(frame_provider.cancel_preload)
-        self._preload_dialog = dlg
+        """批量生成预览图的状态条
+
+        直接嵌在主窗口底部的状态栏里，**不是浮动窗口**，
+        所以不会浮在视频上面挡着看。
+        """
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+
+        self._preload_text = QLabel("")
+        self._preload_bar = QProgressBar()
+        self._preload_bar.setRange(0, 100)
+        self._preload_bar.setFixedWidth(200)
+        self._preload_bar.setTextVisible(True)
+        self._preload_cancel = QPushButton(i18n.tr("cancel"))
+        self._preload_cancel.setFixedWidth(70)
+        self._preload_cancel.clicked.connect(frame_provider.cancel_preload)
+
+        bar.addWidget(self._preload_text, 1)
+        bar.addPermanentWidget(self._preload_bar)
+        bar.addPermanentWidget(self._preload_cancel)
+        bar.setVisible(False)
 
         frame_provider.signals.strip_progress.connect(self._on_strip_progress)
         frame_provider.signals.strip_finished.connect(self._on_strip_finished)
+
+    def _set_preload_visible(self, visible: bool):
+        self.statusBar().setVisible(visible)
+
+    def _set_thumb_quality(self, name: str):
+        """切换预览图精细度"""
+        if prefs.thumb_quality() == name:
+            return
+        prefs.set_thumb_quality(name)
+        frame_provider.reset_strips()   # 丢弃已加载的雪碧图，改用新精度
+        QMessageBox.information(
+            self, i18n.tr("tip"),
+            i18n.tr("thumb_quality_changed",
+                    name=i18n.tr(f"thumb_quality_{name}")))
 
     def _collect_preload_items(self, collection_id=None):
         """收集要生成预览图的视频：[(路径, 时长毫秒, 显示名), ...]"""
@@ -400,14 +434,17 @@ class MainWindow(QMainWindow):
     def _preload_all_strips(self, collection_id=None):
         """在后台批量生成预览图；collection_id 为 None 表示整个库"""
         if frame_provider.preload_active():
-            QMessageBox.information(self, i18n.tr("tip"), i18n.tr("preload_busy"))
+            self._set_preload_visible(True)      # 已在跑，直接把状态条亮出来
             return
         items = self._collect_preload_items(collection_id)
         if not items:
             QMessageBox.information(self, i18n.tr("tip"), i18n.tr("preload_nothing"))
             return
-        self._preload_dialog.setValue(0)
-        self._preload_dialog.show()
+        self._preload_bar.setVisible(True)
+        self._preload_cancel.setVisible(True)
+        self._preload_bar.setValue(0)
+        self._preload_text.setText(i18n.tr("preload_starting"))
+        self._set_preload_visible(True)
         frame_provider.preload_strips(items)
 
     def _ask_preload(self, collection_id: int, name: str):
@@ -425,16 +462,26 @@ class MainWindow(QMainWindow):
                            cur_done, cur_total, name):
         if total_videos <= 0:
             return
+        self._set_preload_visible(True)     # 确保状态条处于可见状态
         ratio = (cur_done / cur_total) if cur_total else 0.0
         percent = int(min(1.0, (done_videos + ratio) / total_videos) * 100)
-        self._preload_dialog.setValue(percent)
-        self._preload_dialog.setLabelText(
+        self._preload_bar.setValue(percent)
+        self._preload_text.setText(
             i18n.tr("preload_label", name=name, percent=percent,
                     done=done_videos, total=total_videos))
 
     def _on_strip_finished(self, completed: bool):
-        self._preload_dialog.hide()
-        self._preload_dialog.reset()
+        """生成结束：收起进度条，只留一句结果，几秒后自动消失"""
+        self._preload_bar.setVisible(False)
+        self._preload_cancel.setVisible(False)
+        self._preload_text.setText(
+            i18n.tr("preload_done") if completed else i18n.tr("preload_cancelled"))
+        QTimer.singleShot(4000, self._hide_preload_bar)
+
+    def _hide_preload_bar(self):
+        self._set_preload_visible(False)
+        self._preload_bar.setVisible(True)
+        self._preload_cancel.setVisible(True)
 
     def _select_audio_device(self, device_id: str):
         self._player.set_audio_output(device_id)
@@ -469,7 +516,6 @@ class MainWindow(QMainWindow):
         else:
             self._grid.load()
         self._toolbar.refresh_theme()
-        self._video_list.refresh_theme()
         self._video_list.refresh_theme()
 
     def _load_collections(self):
