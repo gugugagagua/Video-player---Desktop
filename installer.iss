@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MyAppName "视频集播放器"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.2.0"
 #define MyAppExeName "视频集播放器.exe"
 
 [Setup]
