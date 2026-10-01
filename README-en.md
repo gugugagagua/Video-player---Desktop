@@ -1,8 +1,8 @@
-[**简体中文**](./Readme-zh.md)|[**English**](./Readme-en.md)
+[**简体中文**](./README.md)|[**English**](./README-en.md)
 # Video Set Player (Windows Desktop)
 #This software was developed with AI assistance
 
-**Current version: 1.0.0**
+**Current version: 1.1.0**
 
 > The Android version lives in a separate repository [https://github.com/gugugagagua/Video-player]
 
@@ -37,13 +37,16 @@
 
 ## Download and Install
 
-Using the installer is recommended:
+Get the latest version from the [Releases](../../releases) page:
 
-1. Run `视频集播放器-安装包-1.0.0.exe`
-2. Follow the wizard (installs to `C:\Program Files\视频集播放器` by default)
-3. Launch from the Start menu or the desktop shortcut
+| Download | Description |
+|---|---|
+| **`Video-Set-Player.exe`** | Installer (recommended); installs to `C:\Program Files\视频集播放器` by default |
+| **`Video-Set-Player.zip`** | Portable, no installation needed — just extract and run |
 
-Portable option: extract the whole `dist\视频集播放器\` folder and run `视频集播放器.exe` (the `_internal\` directory must be kept).
+**Installer**: double-click it and follow the wizard, then launch from the Start menu or the desktop shortcut.
+
+**Portable**: extract the archive and run `Video-Set-Player\Video Set Player.exe`. (The `_internal\` folder must stay next to the exe — do not move the exe out on its own.)
 
 **System requirements: Windows 10 64-bit or newer.**
 

@@ -1,6 +1,6 @@
 """播放控制工具栏 - 播放/暂停、音量、进度、倍速、全屏"""
 
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPoint
 from PyQt6.QtGui import QFont, QIcon, QAction, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QSlider, QLabel,
@@ -23,6 +23,9 @@ def _format_time(ms: int) -> str:
 
 
 SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+
+# 鼠标离开进度条后，多久停止后台预加载（毫秒）
+PRELOAD_IDLE_MS = 5000
 
 
 class SeekPreview(QWidget):
@@ -109,6 +112,11 @@ class PlayerToolbar(QWidget):
         self._preview_ms = 0
         self._preview_pos = None
         frame_provider.signals.ready.connect(self._on_preview_frame)
+        # 离开进度条后自动暂停预加载，避免无谓占用 CPU
+        self._preload_idle = QTimer(self)
+        self._preload_idle.setSingleShot(True)
+        self._preload_idle.setInterval(PRELOAD_IDLE_MS)
+        self._preload_idle.timeout.connect(frame_provider.pause_preload)
         self._setup_ui()
         self._apply_theme_style()
 
@@ -281,6 +289,10 @@ class PlayerToolbar(QWidget):
         self._preview.hide()
         self._preview_bucket = -1
         self._preview_token += 1  # 让上一个视频的在途请求失效
+        self._preload_idle.stop()
+        frame_provider.set_active_video(self._video_path)
+        if not self._video_path:
+            frame_provider.pause_preload()
 
     def eventFilter(self, obj, event):
         if obj is self._progress_slider:
@@ -289,6 +301,7 @@ class PlayerToolbar(QWidget):
                 self._on_slider_hover(event)
             elif et in (QEvent.Type.Leave, QEvent.Type.Hide):
                 self._preview.hide()
+                self._preload_idle.start()
         return super().eventFilter(obj, event)
 
     def _ms_at_x(self, x: int) -> int:
@@ -308,6 +321,9 @@ class PlayerToolbar(QWidget):
         ms = self._ms_at_x(pos.x())
         self._preview_ms = ms
 
+        # 悬停期间保持预加载开启
+        self._preload_idle.stop()
+
         # 以下都是轻量操作：改文字、移动浮窗
         self._update_time_label_hover(ms)
         self._preview.set_time(_format_time(ms))
@@ -315,7 +331,8 @@ class PlayerToolbar(QWidget):
         if not self._preview.isVisible():
             self._preview.show()
 
-        # 同一秒内不重复请求；命中缓存立即显示，否则后台抽帧后回调
+        # 同一秒内不重复请求；命中缓存立即显示整帧，
+        # 未命中则先拿最近的已缓存帧占位，精确帧由后台回调补上
         bucket = ms // frame_provider.BUCKET_MS
         if bucket == self._preview_bucket:
             return

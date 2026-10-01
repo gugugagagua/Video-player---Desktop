@@ -2,12 +2,12 @@
 #
 # PyInstaller Windows 版本资源
 # 生成：pyinstaller --version-file version_info.txt
-# 对应版本：1.0.0
+# 对应版本：1.1.0
 #
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -23,12 +23,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', ''),
             StringStruct('FileDescription', '视频集播放器'),
-            StringStruct('FileVersion', '1.0.0.0'),
+            StringStruct('FileVersion', '1.1.0.0'),
             StringStruct('InternalName', '视频集播放器'),
             StringStruct('LegalCopyright', ''),
             StringStruct('OriginalFilename', '视频集播放器.exe'),
             StringStruct('ProductName', '视频集播放器'),
-            StringStruct('ProductVersion', '1.0.0')
+            StringStruct('ProductVersion', '1.1.0')
           ]
         )
       ]
