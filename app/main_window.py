@@ -21,6 +21,7 @@ from app import theme
 from app import icons
 from app import i18n
 from app import frame_provider
+from app import frame_provider
 
 
 class MainWindow(QMainWindow):
@@ -375,6 +376,7 @@ class MainWindow(QMainWindow):
         else:
             self._grid.load()
         self._toolbar.refresh_theme()
+        self._video_list.refresh_theme()
         self._video_list.refresh_theme()
 
     def _load_collections(self):

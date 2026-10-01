@@ -1,4 +1,5 @@
 [**简体中文**](./README.md)|[**English**](./README-en.md)
+[**简体中文**](./README.md)|[**English**](./README-en.md)
 # 视频集播放器（Windows 桌面版）
 #该软件由AI辅助完成
 

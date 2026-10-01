@@ -21,6 +21,11 @@ import threading
 import time
 from collections import OrderedDict
 from typing import Optional, Tuple
+import heapq
+import threading
+import time
+from collections import OrderedDict
+from typing import Optional, Tuple
 
 import cv2
 from PyQt6.QtCore import QObject, pyqtSignal
