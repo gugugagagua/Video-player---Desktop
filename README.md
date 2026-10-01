@@ -1,8 +1,8 @@
-[**简体中文**](./Readme-zh.md)|[**English**](./Readme-en.md)
+[**简体中文**](./README.md)|[**English**](./README-en.md)
 # 视频集播放器（Windows 桌面版）
 #该软件由AI辅助完成
 
-**当前版本：1.0.0**
+**当前版本：1.1.1**
 
 > Android 版见另一仓库 [https://github.com/gugugagagua/Video-player]
 
@@ -37,13 +37,16 @@
 
 ## 下载与安装
 
-推荐直接使用安装包：
+前往 [Releases](../../releases) 页面下载最新版本：
 
-1. 运行 `视频集播放器-安装包-1.0.0.exe`
-2. 按向导完成安装（默认安装到 `C:\Program Files\视频集播放器`）
-3. 从开始菜单或桌面快捷方式启动
+| 下载 | 说明 |
+|---|---|
+| **`Video-Set-Player.exe`** | 安装版（推荐），默认安装到 `C:\Program Files\视频集播放器` |
+| **`Video-Set-Player.zip`** | 免安装便携版，解压即用 |
 
-免安装方式：解压 `dist\视频集播放器\` 整个文件夹后直接运行 `视频集播放器.exe`（`_internal\` 目录必须保留）。
+**安装版**：双击运行，按向导完成安装，然后从开始菜单或桌面快捷方式启动。
+
+**便携版**：解压后运行 `Video-Set-Player\Video Set Player.exe`。（`_internal\` 目录必须与 exe 放在一起，不可单独移动 exe）
 
 **系统要求：Windows 10 64 位及以上。**
 

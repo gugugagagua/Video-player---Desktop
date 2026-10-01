@@ -111,6 +111,20 @@ def toggle() -> Theme:
     return new
 
 
+def with_alpha(color: str, alpha: float) -> str:
+    """把 #RRGGBB / #RGB 转成 rgba(r, g, b, a)，用于半透明配色"""
+    c = (color or "").strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    if len(c) != 6:
+        return color
+    try:
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    except ValueError:
+        return color
+    return f"rgba({r}, {g}, {b}, {alpha:.2f})"
+
+
 # --- 样式表生成 ---
 
 def scroll_area_qss(t: Theme) -> str:
@@ -204,17 +218,30 @@ def import_btn_qss(t: Theme) -> str:
 
 
 def list_widget_qss(t: Theme) -> str:
+    """播放列表样式
+
+    行高亮由 VideoRow 自绘，这里一律保持透明——
+    否则实心选中色会和行内自设颜色的文字/图标打架。
+    """
     return f"""
         QListWidget {{
-            background: {t.bg}; border: none; outline: none;
+            background: transparent; border: none; outline: none;
         }}
         QListWidget::item {{
-            color: {t.text2}; padding: 8px 12px; border-bottom: 1px solid {t.border2};
+            padding: 0px; margin: 2px 10px; border: none;
+            background: transparent;
         }}
-        QListWidget::item:selected {{
-            background: {t.accent}; color: white;
+        QListWidget::item:selected {{ background: transparent; }}
+        QListWidget::item:hover {{ background: transparent; }}
+        QScrollBar:vertical {{
+            background: transparent; width: 8px; margin: 4px 2px;
         }}
-        QListWidget::item:hover {{ background: {t.surface}; }}
+        QScrollBar::handle:vertical {{
+            background: {t.border}; border-radius: 4px; min-height: 30px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: {t.accent}; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
     """
 
 

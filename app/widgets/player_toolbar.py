@@ -1,6 +1,6 @@
 """播放控制工具栏 - 播放/暂停、音量、进度、倍速、全屏"""
 
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QElapsedTimer, QPoint
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QPoint
 from PyQt6.QtGui import QFont, QIcon, QAction, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QSlider, QLabel,
@@ -24,9 +24,25 @@ def _format_time(ms: int) -> str:
 
 SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 
+# 鼠标离开进度条后，多久停止后台预加载（毫秒）
+PRELOAD_IDLE_MS = 5000
+
+# 鼠标停下多久后去取精确帧（毫秒）。拖动过程中只用雪碧图，避免刷爆后台。
+REFINE_DELAY_MS = 130
+
+# 后台帧到达时，与当前悬停位置相差在此范围内就仍然显示（毫秒）。
+# 若一律丢弃，连续拖动时每一帧在完成时都已「过期」，画面会完全不动。
+STALE_TOLERANCE_MS = 3000
+
 
 class SeekPreview(QWidget):
-    """进度条悬停预览浮窗：上方目标画面，下方时间"""
+    """进度条悬停预览浮窗：上方目标画面，下方时间
+
+    尺寸固定不变——尺寸抖动会触发顶层窗口重设大小，是移动时的性能杀手。
+    """
+
+    IMG_W = 240
+    IMG_H = 135
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.ToolTip)
@@ -36,28 +52,34 @@ class SeekPreview(QWidget):
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
         self._img = QLabel()
-        self._img.setFixedSize(240, 135)
+        self._img.setFixedSize(self.IMG_W, self.IMG_H)
         self._img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._img.setStyleSheet("background: #000; border-radius: 4px;")
+        self._img.setStyleSheet("background: #000; color: #888; border-radius: 4px;")
+        self._img.setText("…")
         lay.addWidget(self._img, alignment=Qt.AlignmentFlag.AlignCenter)
         self._time = QLabel("00:00")
+        self._time.setFixedWidth(self.IMG_W)  # 固定宽度，布局尺寸恒定
         self._time.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._time.setStyleSheet("color: #fff; font-size: 12px; font-weight: bold;")
         lay.addWidget(self._time)
+        self.adjustSize()  # 只在初始化时算一次尺寸
 
-    def set_content(self, pixmap: QPixmap | None, text: str):
-        if pixmap is not None and not pixmap.isNull():
-            self._img.setPixmap(pixmap.scaled(
-                self._img.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            ))
-        else:
-            self._img.clear()
-            self._img.setText("…")
-            self._img.setStyleSheet("background: #000; color: #888; border-radius: 4px;")
-        self._time.setText(text)
-        self.adjustSize()
+    def set_image(self, image):
+        """设置目标画面（接受 QImage 或 QPixmap）"""
+        if image is None:
+            return
+        pixmap = image if isinstance(image, QPixmap) else QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return
+        self._img.setPixmap(pixmap.scaled(
+            self._img.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+
+    def set_time(self, text: str):
+        if self._time.text() != text:
+            self._time.setText(text)
 
 
 class PlayerToolbar(QWidget):
@@ -92,8 +114,22 @@ class PlayerToolbar(QWidget):
         # 悬停预览
         self._video_path: str = ""
         self._preview = SeekPreview(self)
-        self._preview_timer = QElapsedTimer()
-        self._preview_timer.start()
+        self._preview_token = 0
+        self._preview_bucket = -1
+        self._preview_ms = 0
+        self._preview_pos = None
+        self._token_ms: dict = {}       # token → 该请求对应的时间点
+        frame_provider.signals.ready.connect(self._on_preview_frame)
+        # 鼠标停下后再取精确帧
+        self._refine_timer = QTimer(self)
+        self._refine_timer.setSingleShot(True)
+        self._refine_timer.setInterval(REFINE_DELAY_MS)
+        self._refine_timer.timeout.connect(self._request_exact_frame)
+        # 离开进度条后自动暂停预加载，避免无谓占用 CPU
+        self._preload_idle = QTimer(self)
+        self._preload_idle.setSingleShot(True)
+        self._preload_idle.setInterval(PRELOAD_IDLE_MS)
+        self._preload_idle.timeout.connect(frame_provider.pause_preload)
         self._setup_ui()
         self._apply_theme_style()
 
@@ -264,6 +300,14 @@ class PlayerToolbar(QWidget):
         """设置当前视频路径，供悬停预览抽帧"""
         self._video_path = video_path or ""
         self._preview.hide()
+        self._preview_bucket = -1
+        self._preview_token += 1  # 让上一个视频的在途请求失效
+        self._token_ms.clear()
+        self._refine_timer.stop()
+        self._preload_idle.stop()
+        frame_provider.set_active_video(self._video_path)
+        if not self._video_path:
+            frame_provider.pause_preload()
 
     def eventFilter(self, obj, event):
         if obj is self._progress_slider:
@@ -272,6 +316,7 @@ class PlayerToolbar(QWidget):
                 self._on_slider_hover(event)
             elif et in (QEvent.Type.Leave, QEvent.Type.Hide):
                 self._preview.hide()
+                self._preload_idle.start()
         return super().eventFilter(obj, event)
 
     def _ms_at_x(self, x: int) -> int:
@@ -289,21 +334,81 @@ class PlayerToolbar(QWidget):
             return
         pos = event.position().toPoint()
         ms = self._ms_at_x(pos.x())
+        self._preview_ms = ms
+
+        # 悬停期间保持预加载开启
+        self._preload_idle.stop()
+
+        # 以下都是轻量操作：改文字、移动浮窗
         self._update_time_label_hover(ms)
-        # 节流：每 120ms 抽一帧，避免拖动时频繁解码
-        if self._preview_timer.elapsed() < 120 and self._preview.isVisible():
-            self._move_preview(pos)
-            return
-        self._preview_timer.restart()
-        pix = frame_provider.grab_frame(self._video_path, ms, max_width=240) if self._video_path else None
-        self._preview.set_content(pix, _format_time(ms))
+        self._preview.set_time(_format_time(ms))
         self._move_preview(pos)
-        self._preview.show()
+        if not self._preview.isVisible():
+            self._preview.show()
+
+        bucket = ms // frame_provider.BUCKET_MS
+        if bucket != self._preview_bucket:
+            self._preview_bucket = bucket
+            # ① 雪碧图已覆盖 → 直接裁一格，微秒级，这就是「指哪打哪」
+            tile = frame_provider.tile_at(self._video_path, ms)
+            if tile is not None:
+                self._preview.set_image(tile)
+            else:
+                # ② 尚未覆盖 → 走按需解码（命中缓存即时，否则先给近似帧占位）
+                self._request_frame_async(ms)
+
+        # 鼠标停下后再补一帧精确画面（拖动过程中不打扰后台）
+        self._refine_timer.start()
+
+    def _request_frame_async(self, ms: int):
+        """向后台请求 ms 处的精确帧"""
+        self._preview_token += 1
+        token = self._preview_token
+        self._token_ms[token] = ms
+        if len(self._token_ms) > 64:
+            for key in list(self._token_ms)[:-16]:
+                self._token_ms.pop(key, None)
+        cached = frame_provider.request_frame(self._video_path, ms, token)
+        if cached is not None:
+            self._preview.set_image(cached)
+
+    def _request_exact_frame(self):
+        """鼠标停下后取当前位置的精确帧"""
+        if not self._video_path or self._duration <= 0:
+            return
+        self._request_frame_async(self._preview_ms)
+
+    def _on_preview_frame(self, image, token):
+        """后台抽帧完成回调（已在 GUI 线程）"""
+        req_ms = self._token_ms.pop(token, None)
+        if image is None or req_ms is None:
+            return
+        # 只要离当前悬停位置不算远就显示。
+        # 若一律按「过期」丢弃，连续拖动时每个帧在完成时都已过期，画面会完全不动。
+        if abs(req_ms - self._preview_ms) > STALE_TOLERANCE_MS:
+            return
+        self._preview.set_image(image)
 
     def _move_preview(self, pos: QPoint):
-        global_pos = self._progress_slider.mapToGlobal(pos)
-        x = global_pos.x() - self._preview.width() // 2
-        y = global_pos.y() - self._preview.height() - 12
+        """横向跟随鼠标，纵向固定（锚定在进度条上方）"""
+        pw = self._preview.width()
+        # 横向：以鼠标为中心
+        mouse_global = self._progress_slider.mapToGlobal(pos)
+        x = mouse_global.x() - pw // 2
+        # 纵向：始终以进度条顶边为基准，不随鼠标纵向位置变化
+        slider_top = self._progress_slider.mapToGlobal(QPoint(0, 0)).y()
+        y = slider_top - self._preview.height() - 12
+
+        # 限制在主窗口范围内，避免贴边被裁掉
+        win = self.window()
+        if win is not None:
+            g = win.geometry()
+            x = max(g.left() + 4, min(x, g.right() - pw - 3))
+
+        # 位置没变就不调用 move（纵向移动鼠标时零窗口操作）
+        if (x, y) == self._preview_pos:
+            return
+        self._preview_pos = (x, y)
         self._preview.move(x, y)
 
     def _update_time_label_hover(self, ms: int):
@@ -315,6 +420,9 @@ class PlayerToolbar(QWidget):
         self._duration = ms
         self._progress_slider.setRange(0, ms)
         self._update_time_label(0)
+        # 时长已知 → 开始准备缩略图雪碧图（先读磁盘缓存，无则后台生成）
+        if self._video_path and ms > 0:
+            frame_provider.prepare_strip(self._video_path, ms)
 
     def set_position(self, ms: int):
         if not self._is_slider_dragging:
