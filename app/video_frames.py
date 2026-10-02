@@ -19,6 +19,7 @@ import cv2
 # 与 thumb_strip 保持一致的格子规格
 TILE_W = 160
 TILE_H = 90
+MAX_TILES = 1200            # 硬上限：超长视频会自动放宽间隔，避免雪碧图过大
 
 
 # ─── 子进程内复用的解码器 ─────────────────────────────────
@@ -112,10 +113,14 @@ def grab_tile_rgb(cap, fps: float, position_ms: int, max_width: int = TILE_W):
 
 # ─── 子进程入口 ───────────────────────────────────────────
 
-def extract_tiles(video_path: str, interval_ms: int, start: int, stop: int):
-    """【子进程任务】抽取 [start, stop) 这几格的画面。
+def extract_tiles(video_path: str, times, start: int, stop: int):
+    """【子进程任务】抽取 [start, stop) 这几格的画面（OpenCV 实现）
 
-    参数与返回值都必须可 pickle。返回 [(格号, 宽, 高, RGB 字节), ...]。
+    times 是每格的真实时间戳（毫秒）。参数与返回值都必须可 pickle，
+    返回 [(格号, 宽, 高, RGB 字节), ...]。
+
+    这是 PyAV 不可用时的退路：OpenCV 的 set(POS_FRAMES) 会先 seek 到关键帧
+    再逐帧解码追到目标帧，慢很多，但结果一致。
     """
     cap = _ensure_cap(video_path)
     if cap is None:
@@ -123,10 +128,9 @@ def extract_tiles(video_path: str, interval_ms: int, start: int, stop: int):
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     if fps <= 0:
         fps = 25.0
-    interval_ms = int(interval_ms)
     out = []
     for index in range(int(start), int(stop)):
-        item = grab_tile_rgb(cap, fps, index * interval_ms)
+        item = grab_tile_rgb(cap, fps, int(times[index]))
         if item is not None:
             out.append((index, item[0], item[1], item[2]))
     return out

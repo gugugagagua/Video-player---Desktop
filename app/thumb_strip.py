@@ -1,13 +1,18 @@
 """缩略图雪碧图（storyboard） - 让悬停预览「指哪打哪」
 
-思路与主流视频网站一致：把整段视频按固定间隔抽帧，拼成一张大图，
+思路与主流视频网站一致：把整段视频抽帧拼成一张大图，
 悬停时只从大图里裁一格，微秒级完成，完全不需要解码。
 
-- 首次遇到某个视频时在后台按最低优先级逐格生成，边生成边可用
+- 首次遇到某个视频时在后台逐格生成，边生成边可用
 - 生成完落盘（JPEG + JSON 元信息），以后打开同一视频直接读盘
 - 未生成到目标格时，仍回退到按需解码，保证任何位置都有画面
+
+**格子时间不假定等间隔**：抽帧会把每格锚定到离名义时间最近的关键帧
+（见 app/keyframes.py），间隔由关键帧分布决定，所以时间表必须如实记录并落盘，
+预览时按「时间戳不晚于目标时间的最后一格」查找，标签才能和画面对上。
 """
 
+import bisect
 import hashlib
 import json
 import os
@@ -25,7 +30,6 @@ from app.video_frames import TILE_H, TILE_W
 # ─── 规格 ─────────────────────────────────────────────────
 # TILE_W / TILE_H 与抽帧模块共用同一定义（见 app/video_frames.py）
 COLS = 10                   # 每行格数
-MAX_TILES = 1200            # 硬上限：超长视频会自动放宽间隔，避免雪碧图过大
 FLUSH_EVERY = 30            # 每生成多少格落盘一次
 
 
@@ -51,7 +55,7 @@ def _file_key(video_path: str) -> str:
 class ThumbStrip:
     """一部视频的缩略图雪碧图"""
 
-    def __init__(self, video_path: str, duration_ms: int):
+    def __init__(self, video_path: str, duration_ms: int, times=None):
         self.video_path = video_path
         self.duration_ms = max(0, int(duration_ms))
         self.key = _file_key(video_path)
@@ -60,22 +64,23 @@ class ThumbStrip:
 
         # 间隔由用户在「设置 → 预览图间隔」里选，默认 10 秒
         self.interval_ms = prefs.thumb_interval_ms()
-        if self.duration_ms <= 0:
-            self.count = 0
-        else:
-            # 向上取整：最后一格必须落在视频长度内，否则取不到帧
-            count = (self.duration_ms + self.interval_ms - 1) // self.interval_ms
-            if count > MAX_TILES:
-                # 超长视频自动放宽间隔，把格数压回上限
-                self.interval_ms = (self.duration_ms + MAX_TILES - 1) // MAX_TILES
-                count = (self.duration_ms + self.interval_ms - 1) // self.interval_ms
-            self.count = max(1, count)
-
         self.cols = COLS
-        self.rows = (self.count + self.cols - 1) // self.cols if self.count else 0
         self.image: Optional[QImage] = None
-        self.done = 0               # 已按顺序生成的格数
+        self.done = 0               # 已生成到的格号（+1 语义，允许跳格）
         self._unflushed = 0
+
+        # 每格的真实时间戳（毫秒，升序）。等间隔只是特例。
+        self.times: list = []
+        self.count = 0
+        self.rows = 0
+        if times:
+            self.set_times(times)
+
+    def set_times(self, times):
+        """注入格子时间表（毫秒，升序）"""
+        self.times = [int(t) for t in times]
+        self.count = len(self.times)
+        self.rows = (self.count + self.cols - 1) // self.cols if self.count else 0
 
     # ── 状态 ────────────────────────────────────────────
 
@@ -91,34 +96,41 @@ class ThumbStrip:
         return self.count > 0 and self.done >= self.count
 
     def time_at(self, index: int) -> int:
-        return index * self.interval_ms
+        return self.times[index]
 
     # ── 磁盘读写（仅工作线程调用）──────────────────────
 
     def load(self) -> bool:
-        """从磁盘恢复，成功返回 True"""
-        if self.count <= 0:
-            return False
+        """从磁盘恢复（含关键帧时间表），成功返回 True"""
         try:
             with open(self.meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             if (meta.get("key") != self.key
-                    or meta.get("interval_ms") != self.interval_ms
-                    or meta.get("count") != self.count):
+                    or meta.get("interval_ms") != self.interval_ms):
                 return False
+            times = meta.get("times")
+            if not isinstance(times, list) or not times:
+                return False        # 早期版本没有时间表 → 丢弃重建
             img = QImage(self.image_path)
             if img.isNull():
                 return False
             img = img.convertToFormat(QImage.Format.Format_RGB888)
-            if img.width() != TILE_W * self.cols or img.height() < TILE_H:
-                return False
-            with self._lock:
-                self.image = img
-                # 支持断点续传：已生成多少格就恢复多少格
-                self.done = min(int(meta.get("done", self.count)), self.count)
-            return True
         except Exception:
             return False
+
+        with self._lock:
+            self.set_times(times)
+            # 图尺寸必须与新时间表算出的行数一致，否则是别的参数生成的，丢弃
+            if (img.width() != TILE_W * self.cols
+                    or img.height() != TILE_H * max(1, self.rows)):
+                self.times = []
+                self.count = 0
+                self.rows = 0
+                return False
+            self.image = img
+            # 支持断点续传：已生成多少格就恢复多少格
+            self.done = min(int(meta.get("done", self.count)), self.count)
+        return True
 
     def save(self):
         """落盘。
@@ -146,6 +158,8 @@ class ThumbStrip:
                     "tile_w": TILE_W,
                     "tile_h": TILE_H,
                     "cols": self.cols,
+                    # 每格真实时间戳：关键帧锚定后间隔不再均匀，必须落盘
+                    "times": self.times,
                 }, f)
         except Exception:
             pass
@@ -180,46 +194,17 @@ class ThumbStrip:
     # ── 读取（仅 GUI 线程调用）─────────────────────────
 
     def tile(self, position_ms: int) -> Optional[QPixmap]:
-        """裁出目标时间所在的格子；尚未生成则返回 None"""
+        """裁出「时间戳不晚于目标时间的最后一格」；尚未生成则返回 None
+
+        时间表不一定均匀（关键帧锚定），所以用二分查找而不是除法取整。
+        """
         if self.count <= 0:
             return None
-        index = min(self.count - 1, max(0, position_ms // self.interval_ms))
+        index = bisect.bisect_right(self.times, position_ms) - 1
+        index = min(self.count - 1, max(0, index))
         with self._lock:
             if self.image is None or index >= self.done:
                 return None
             x = (index % self.cols) * TILE_W
             y = (index // self.cols) * TILE_H
             return QPixmap.fromImage(self.image.copy(x, y, TILE_W, TILE_H))
-
-
-# ─── 磁盘探测（不加载图片，只读元信息，很快）────────────────
-
-def read_meta(video_path: str, duration_ms: int) -> Optional[dict]:
-    """读取磁盘上的元信息；不存在或与当前参数不符则返回 None"""
-    strip = ThumbStrip(video_path, duration_ms)
-    if strip.count <= 0:
-        return None
-    try:
-        with open(strip.meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception:
-        return None
-    if (meta.get("key") == strip.key
-            and meta.get("interval_ms") == strip.interval_ms
-            and meta.get("count") == strip.count):
-        return meta
-    return None
-
-
-def cached_count(video_path: str, duration_ms: int) -> int:
-    """磁盘上已生成到第几格；无缓存返回 -1"""
-    meta = read_meta(video_path, duration_ms)
-    if meta is None:
-        return -1
-    return int(meta.get("done", 0))
-
-
-def is_cached(video_path: str, duration_ms: int) -> bool:
-    """磁盘上是否已有完整的雪碧图"""
-    meta = read_meta(video_path, duration_ms)
-    return bool(meta is not None and int(meta.get("done", 0)) >= int(meta.get("count", 0)))

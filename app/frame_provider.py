@@ -35,6 +35,7 @@ import cv2
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
+from app import keyframes
 from app import thumb_strip
 from app import video_frames
 
@@ -433,6 +434,11 @@ class _Worker(threading.Thread):
 # 子进程只导入 cv2（见 app/video_frames.py），不碰 Qt，spawn 才够快。
 STRIP_PROCESSES = 4
 
+# 每部视频切成多少块提交给进程池。
+# 块越细：负载越匀、进度条越平滑，但每个任务的 pickle/IPC 固定开销占比越高。
+# PyAV 关键帧方案下单格只要 ~70ms，块就不宜太细。
+STRIP_CHUNKS_PER_WORKER = 6
+
 
 # ─── 子进程池 ─────────────────────────────────────────────
 
@@ -529,9 +535,20 @@ class _StripGenerator(threading.Thread):
         if duration_ms <= 0:
             duration_ms = self._probe_duration(path)
         strip = thumb_strip.ThumbStrip(path, duration_ms)
+
+        # 先试磁盘缓存：命中就连时间表一起恢复，不必再枚举关键帧
+        if not strip.load():
+            times, _anchored = keyframes.tile_times(
+                path, duration_ms, strip.interval_ms)
+            if not times:
+                if batch:
+                    self._finish_video()
+                return
+            strip.set_times(times)
+
         self._strip = strip
         self._strip_path = path
-        start = strip.done if strip.load() else 0    # 支持断点续传
+        start = strip.done          # 支持断点续传
 
         if batch:
             self._name = name
@@ -559,7 +576,7 @@ class _StripGenerator(threading.Thread):
 
         workers = min(STRIP_PROCESSES, max(1, (os.cpu_count() or 2) - 1))
         workers = max(1, min(workers, remaining))
-        chunks = min(remaining, workers * 6)
+        chunks = min(remaining, workers * STRIP_CHUNKS_PER_WORKER)
         size = (remaining + chunks - 1) // chunks
         ranges = []
         lo = start
@@ -576,8 +593,8 @@ class _StripGenerator(threading.Thread):
         futures = []
         for lo, hi in ranges:
             try:
-                futures.append(pool.submit(video_frames.extract_tiles,
-                                           path, strip.interval_ms, lo, hi))
+                futures.append(pool.submit(keyframes.extract_tiles,
+                                           path, strip.times, lo, hi))
             except Exception:
                 break
 
@@ -592,10 +609,10 @@ class _StripGenerator(threading.Thread):
                 tiles = []
             self._paint(strip, tiles)
 
-        # 让子进程把缓存的解码器放掉，别一直占着文件句柄
+        # 让子进程把缓存的解码器/容器放掉，别一直占着文件句柄
         for _ in range(workers):
             try:
-                pool.submit(video_frames.release_cap)
+                pool.submit(keyframes.release)
             except Exception:
                 break
 
@@ -618,8 +635,7 @@ class _StripGenerator(threading.Thread):
             for index in range(start, count):
                 if self._cancel.is_set() or self._stopping:
                     break
-                image = _read_frame_image(cap, fps,
-                                          index * strip.interval_ms,
+                image = _read_frame_image(cap, fps, strip.times[index],
                                           thumb_strip.TILE_W)
                 if image is not None and strip.put_tile(index, image):
                     strip.save()

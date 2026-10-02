@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MyAppName "视频集播放器"
-#define MyAppVersion "1.3.2"
+#define MyAppVersion "1.4.0"
 #define MyAppExeName "视频集播放器.exe"
 
 [Setup]
@@ -20,7 +20,8 @@ DefaultGroupName={#MyAppName}
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputDir=installer_output
-OutputBaseFilename={#MyAppName}-安装包-{#MyAppVersion}
+; 产物文件名与 GitHub Release 的资产命名保持一致，发版时无需再手工改名
+OutputBaseFilename=Video-Set-Player-{#MyAppVersion}
 SetupIconFile=app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
