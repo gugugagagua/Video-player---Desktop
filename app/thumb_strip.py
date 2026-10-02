@@ -19,11 +19,11 @@ from PyQt6.QtGui import QImage, QPainter, QPixmap
 
 from app import paths
 from app import prefs
+from app.video_frames import TILE_H, TILE_W
 
 
 # ─── 规格 ─────────────────────────────────────────────────
-TILE_W = 160                # 单格宽
-TILE_H = 90                 # 单格高
+# TILE_W / TILE_H 与抽帧模块共用同一定义（见 app/video_frames.py）
 COLS = 10                   # 每行格数
 MAX_TILES = 1200            # 硬上限：超长视频会自动放宽间隔，避免雪碧图过大
 FLUSH_EVERY = 30            # 每生成多少格落盘一次
@@ -56,6 +56,7 @@ class ThumbStrip:
         self.duration_ms = max(0, int(duration_ms))
         self.key = _file_key(video_path)
         self._lock = threading.Lock()
+        self._save_lock = threading.Lock()
 
         # 间隔由用户在「设置 → 预览图间隔」里选，默认 10 秒
         self.interval_ms = prefs.thumb_interval_ms()
@@ -120,27 +121,36 @@ class ThumbStrip:
             return False
 
     def save(self):
-        """落盘。可直接从工作线程调用。"""
-        with self._lock:
-            if self.image is None or self.done <= 0:
-                return
-            snapshot = self.image.copy(0, 0, TILE_W * self.cols,
-                                       TILE_H * max(1, self.rows))
-            self._unflushed = 0
+        """落盘。
+
+        会被多个分段线程并发调用，这里用非阻塞锁串行化：
+        已有线程在写就直接返回（下次再写），避免大家排队等磁盘。
+        """
+        if not self._save_lock.acquire(blocking=False):
+            return
         try:
+            with self._lock:
+                if self.image is None or self.done <= 0:
+                    return
+                snapshot = self.image.copy(0, 0, TILE_W * self.cols,
+                                           TILE_H * max(1, self.rows))
+                done = self.done
+                self._unflushed = 0
             snapshot.save(self.image_path, "JPEG", 85)
             with open(self.meta_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "key": self.key,
                     "interval_ms": self.interval_ms,
                     "count": self.count,
-                    "done": self.done,
+                    "done": done,
                     "tile_w": TILE_W,
                     "tile_h": TILE_H,
                     "cols": self.cols,
                 }, f)
         except Exception:
             pass
+        finally:
+            self._save_lock.release()
 
     # ── 写入（仅工作线程调用）──────────────────────────
 
