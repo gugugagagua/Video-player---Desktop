@@ -2,7 +2,7 @@
 # 视频集播放器（Windows 桌面版）
 #该软件由AI辅助完成
 
-**当前版本：1.7.0**
+**当前版本：1.7.1**
 
 > Android 版见另一仓库 [https://github.com/gugugagagua/Video-player]
 
@@ -44,8 +44,8 @@
 
 | 下载 | 说明 |
 |---|---|
-| **`Video-Set-Player-1.7.0.exe`** | 安装版（推荐），默认安装到 `C:\Program Files\视频集播放器` |
-| **`Video-Set-Player-1.7.0.zip`** | 免安装便携版，解压即用 |
+| **`Video-Set-Player-1.7.1.exe`** | 安装版（推荐），默认安装到 `C:\Program Files\视频集播放器` |
+| **`Video-Set-Player-1.7.1.zip`** | 免安装便携版，解压即用 |
 
 **安装版**：双击运行，按向导完成安装，然后从开始菜单或桌面快捷方式启动。
 

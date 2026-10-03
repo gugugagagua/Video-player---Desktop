@@ -274,7 +274,9 @@ class MainWindow(QMainWindow):
         self._immersive = on
         self._toolbar.set_immersive(on)
         self._back_btn.setVisible(not on)
-        self._immersive_exit.setVisible(on)
+        # 退出按钮不进常驻控件：它和浮层列表**同进同出**，统一交给
+        # _poll_immersive_edge 按鼠标位置控制。这里两种模式都先收起来。
+        self._immersive_exit.setVisible(False)
         # 列表先统一从视频区布局里摘出来，两种模式都由这里决定它去哪儿
         self._video_area_layout.removeWidget(self._video_list)
 
@@ -330,14 +332,23 @@ class MainWindow(QMainWindow):
         if width <= 0:
             return
         near_edge = local.x() >= width - IMMERSIVE_EDGE_PX
-        over_list = (self._video_list.isVisible()
-                     and self._video_list.geometry().contains(local))
+        # 鼠标压在列表或退出按钮上时也算「还在里面」，
+        # 否则刚移到按钮上就会闪掉，根本点不到
+        over_list = self._video_list.isVisible() and (
+            self._video_list.geometry().contains(local)
+            or self._immersive_exit.geometry().contains(local))
         if near_edge or over_list:
             if not self._video_list.isVisible():
                 self._video_list.show()
                 self._video_list.raise_()
-        elif self._video_list.isVisible():
-            self._video_list.hide()
+            if not self._immersive_exit.isVisible():
+                self._immersive_exit.show()
+                self._immersive_exit.raise_()
+        else:
+            if self._video_list.isVisible():
+                self._video_list.hide()
+            if self._immersive_exit.isVisible():
+                self._immersive_exit.hide()
 
     # ─── 长按加速（D / → 触发 2 倍速，松手恢复）─────────
 
