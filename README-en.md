@@ -2,14 +2,14 @@
 # Video Set Player (Windows Desktop)
 #This software was developed with AI assistance
 
-**Current version: 1.4.0**
+**Current version: 1.7.0**
 
 > The Android version lives in a separate repository [https://github.com/gugugagagua/Video-player]
 
 ## Tech Stack
 
 - Python 3.10+ / PyQt6 (Qt 6)
-- PyQt6.QtMultimedia (FFmpeg backend, video playback)
+- **libmpv** (via python-mpv) as the playback backend — brings its own decoders and hardware acceleration
 - PyAV (reads the keyframe index; anchors storyboard tiles to keyframes)
 - OpenCV-Python (first-frame extraction, duration probing, on-demand hover grabbing, grabbing fallback)
 - multiprocessing (parallel, chunked storyboard generation)
@@ -35,7 +35,8 @@
 | Swipe to seek | Drag the progress bar to seek; **hover the progress bar** to preview the target frame and time — pre-generate thumbnails for zero-latency previews |
 | Fullscreen | Toggle with `F` or double-click; exit with `Esc` |
 | Light / dark theme | Material 3, **follows the system** color mode automatically; switch manually via the Theme menu |
-| Volume | Bottom volume slider + up/down arrow keys |
+
+> The desktop version has no in-app volume control — use your system volume.
 
 ## Download and Install
 
@@ -43,8 +44,8 @@ Get the latest version from the [Releases](../../releases) page:
 
 | Download | Description |
 |---|---|
-| **`Video-Set-Player-1.4.0.exe`** | Installer (recommended); installs to `C:\Program Files\视频集播放器` by default |
-| **`Video-Set-Player-1.4.0.zip`** | Portable, no installation needed — just extract and run |
+| **`Video-Set-Player-1.7.0.exe`** | Installer (recommended); installs to `C:\Program Files\视频集播放器` by default |
+| **`Video-Set-Player-1.7.0.zip`** | Portable, no installation needed — just extract and run |
 
 **Installer**: double-click it and follow the wizard, then launch from the Start menu or the desktop shortcut.
 
@@ -53,6 +54,23 @@ Get the latest version from the [Releases](../../releases) page:
 **System requirements: Windows 10 64-bit or newer.**
 
 ## Build
+
+### Prerequisites
+
+Besides `pip install -r requirements.txt`, **playback needs `libmpv-2.dll`** (~115 MB):
+
+1. Open <https://github.com/shinchiro/mpv-winbuild-cmake/releases> and download the latest `mpv-dev-x86_64-*.7z` (~30 MB)
+2. Extract it (7-Zip, or Windows' built-in `tar -xf`) and place `libmpv-2.dll` into the project's `libmpv\` folder
+
+```
+视频集播放器\
+└── libmpv\
+    └── libmpv-2.dll
+```
+
+> The file is too large for version control (it is in `.gitignore`). `build.bat` checks for it and exits with an error when it is missing.
+>
+> Packaging uses `--add-binary "libmpv\libmpv-2.dll;."` to place it under `_internal\`; at startup the app prepends that folder to `%PATH%` — `python-mpv` loads the DLL via `ctypes.CDLL("libmpv-2.dll")`, which searches **`%PATH%`** and ignores `os.add_dll_directory`.
 
 ### Run from source
 
@@ -186,17 +204,32 @@ Smaller intervals give finer previews, but the tile count, generation time and c
 
 > Actual times depend on your machine and the video codec — treat these as a rough guide. After changing the interval, **existing storyboards must be regenerated** to match (the app reminds you). Very long videos automatically widen the interval, capping the tile count at 1200 so the storyboard never grows too large.
 >
+> Changing **either** the interval **or** the quality invalidates existing storyboards, since both the timestamp table and the tile pixel size change. Stale caches are deleted automatically and regenerated with the new settings the next time you play a video — no unusable leftovers are left on disk.
+>
 > The keyframe spacing (GOP) sets a floor: the real gap between tiles can never be shorter than the video's GOP (usually 2–10 seconds), so setting the interval below that will not give you finer previews.
+
+#### Thumbnail Quality
+
+Menu **Settings → Thumbnail Quality**:
+
+| Preset | Frame size | Notes |
+|---|---|---|
+| Standard | 240×135 | Same size as the old preview window |
+| **High** (default) | 320×180 | Recommended |
+| Ultra | 480×270 | Largest picture |
+
+The preview window and the sampling resolution are **always the same size** (both come from this setting), so the pixels fill the window exactly — no "small image stretched up" blur. Older builds sampled at 160×90 but displayed it in a 240×135 window, a 1.5× upscale, which is why it looked soft.
+
+> Raising the preset barely affects generation time — the cost is dominated by decoding, which is largely independent of the output size — it only grows the cache. For a 24-minute video at "every 10 seconds", the storyboard is roughly 1.2 MB (Standard) / 1.8 MB (High) / 3.3 MB (Ultra). Changing it also requires **regenerating**, and caches are not shared between presets.
 
 ### Player Controls
 
 | Action | Description |
 |---|---|
 | Space | Play / pause |
-| ← | Seek backward 10 seconds |
-| → | Short press: seek forward 10 seconds |
+| ← | Seek backward 5 seconds |
+| → | Short press: seek forward 5 seconds |
 | Long-press D / → | Play at 2× speed; release to restore (a `»2x` hint appears at the top) |
-| ↑ / ↓ | Volume +5 / -5 |
 | F | Toggle fullscreen |
 | Esc | Exit fullscreen (in fullscreen, Esc does not go back home) |
 | Double-click the video | Toggle fullscreen |
@@ -218,15 +251,16 @@ The next episode plays automatically when one finishes; unsupported or broken vi
 
 - Database: `data/videos.db` (SQLite, with the `groups` / `collections` / `videos` tables)
 - Covers: `cover.png` inside each video set folder
-- Storyboard cache: `data/thumbs/`, one `<key>.jpg` + `<key>.json` pair per video; the whole folder can be deleted safely and will be regenerated on demand
+- Storyboard cache: stored **inside the video set folder**, one `<video name>.storyboard.jpg` + `.json` pair per video. Copy the folder elsewhere and the cache comes with it — no regeneration needed. Deleting them is harmless; they are rebuilt on demand
 - Video files are **not duplicated**; the database stores the original file paths
 
 ## Known Limitations
 
 - Directory scanning is **single-level**: a video set is the selected folder itself; subdirectories are not recursed
 - Each video set's cover is the single fixed `cover.png`
-- Playback relies on the QtMultimedia FFmpeg backend; a few codecs may not decode
+- Playback is handled by libmpv (far better format coverage than QtMultimedia), but the package must ship a ~115 MB `libmpv-2.dll`
+- Seeking (arrow keys, slider) still rewinds to the previous keyframe and decodes forward, so the actual pause depends on the video's GOP (~9.9 s in our sample library) — a codec-level constraint
 - Storyboard tiles are sampled at keyframes, so their real spacing is bounded by the video's GOP (see above)
 - Generating storyboards briefly uses up to 4 CPU cores; increasing the Thumbnail Interval cuts the workload
 - Smaller intervals mean more tiles and a larger cache (very long videos automatically widen the interval, capped at 1200 tiles)
-- The installer is fairly large (PyQt6 + OpenCV + PyAV's bundled FFmpeg, about 85 MB)
+- The installer is fairly large (PyQt6 + OpenCV + PyAV's FFmpeg + libmpv, about 115 MB); libmpv alone is 115 MB uncompressed, ~30 MB compressed

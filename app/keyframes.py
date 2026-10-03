@@ -174,15 +174,15 @@ def release_container():
     _container_path = ""
 
 
-def _grab_pyav(container, stream, target_ms: int):
+def _grab_pyav(container, stream, target_ms: int, tile_w: int):
     """seek 到 <= target 的关键帧，只解一帧，返回 (宽, 高, RGB 字节)"""
     container.seek(int(target_ms) * 1000, backward=True)
     for frame in container.decode(stream):
         arr = frame.to_ndarray(format="rgb24")
         h, w = arr.shape[:2]
-        if w > TILE_W:
-            scale = TILE_W / w
-            arr = cv2.resize(arr, (TILE_W, max(1, int(h * scale))),
+        if w > tile_w:
+            scale = tile_w / w
+            arr = cv2.resize(arr, (tile_w, max(1, int(h * scale))),
                              interpolation=cv2.INTER_AREA)
             h, w = arr.shape[:2]
         return w, h, arr.tobytes()
@@ -190,26 +190,28 @@ def _grab_pyav(container, stream, target_ms: int):
 
 
 def extract_tiles(video_path: str, times: List[int],
-                  start: int, stop: int):
+                  start: int, stop: int, tile_w: int = TILE_W):
     """【子进程任务】抽取 [start, stop) 这几格的画面。
 
+    times 是每格的真实时间戳（毫秒），tile_w 是目标单格宽度（由用户在
+    「预览图精细度」里选，作为参数传进来，避免子进程去导入 Qt 相关的 prefs）。
     返回 [(格号, 宽, 高, RGB 字节), ...]。参数与返回值都必须可 pickle。
     PyAV 不可用时自动退回 OpenCV。
     """
     if not available():
         from app.video_frames import extract_tiles as _fallback
-        return _fallback(video_path, times, start, stop)
+        return _fallback(video_path, times, start, stop, tile_w)
 
     container = _ensure_container(video_path)
     if container is None:
         from app.video_frames import extract_tiles as _fallback
-        return _fallback(video_path, times, start, stop)
+        return _fallback(video_path, times, start, stop, tile_w)
 
     stream = container.streams.video[0]
     out = []
     for index in range(int(start), int(stop)):
         try:
-            item = _grab_pyav(container, stream, times[index])
+            item = _grab_pyav(container, stream, times[index], tile_w)
         except Exception:
             item = None
         if item is not None:

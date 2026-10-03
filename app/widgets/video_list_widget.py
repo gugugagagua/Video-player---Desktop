@@ -88,22 +88,23 @@ class VideoRow(QWidget):
         dur = video.get("duration") or 0
         watched = _is_watched(pos, dur)
 
-        # ── 按状态决定配色 ────────────────────────
+        # ── 统一配色 ──────────────────────────────
+        # 图标与文件名一律用列表自身的文字色，状态只靠「图标形状 + 细进度条」区分。
+        # 早先每行各用一种强调色，还会和侧栏底色打架，看起来不像一套界面。
         if playing:
-            icon_name, icon_color = "play_arrow", t.accent
-            name_color, weight = t.text, QFont.Weight.DemiBold
-            row_bg, bar_color = theme.with_alpha(t.accent, 0.15), t.accent
+            icon_name, weight = "play_arrow", QFont.Weight.DemiBold
+            row_bg = theme.with_alpha(t.accent, 0.12)
             line_color, line_alpha = t.accent, 1.0
         elif watched:
-            icon_name, icon_color = "check_circle", t.success
-            name_color, weight = t.text2, QFont.Weight.Normal
-            row_bg, bar_color = "transparent", "transparent"
-            line_color, line_alpha = t.success, 1.0
+            icon_name, weight = "check_circle", QFont.Weight.Normal
+            row_bg = "transparent"
+            line_color, line_alpha = t.text2, 0.75
         else:
-            icon_name, icon_color = "radio_button_unchecked", t.text2
-            name_color, weight = t.text2, QFont.Weight.Normal
-            row_bg, bar_color = "transparent", "transparent"
-            line_color, line_alpha = t.text2, 0.45
+            icon_name, weight = "radio_button_unchecked", QFont.Weight.Normal
+            row_bg = "transparent"
+            line_color, line_alpha = t.text2, 0.30
+        icon_color = t.text if playing else t.text2
+        name_color = t.text
 
         self.setStyleSheet(f"""
             VideoRow {{
@@ -116,14 +117,8 @@ class VideoRow(QWidget):
         """)
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(10, 9, 12, 9)
+        outer.setContentsMargins(14, 9, 12, 9)
         outer.setSpacing(9)
-
-        # 左侧状态条（非播放态留空占位，保证各行对齐）
-        bar = QFrame()
-        bar.setFixedWidth(3)
-        bar.setStyleSheet(f"background: {bar_color}; border-radius: 2px;")
-        outer.addWidget(bar)
 
         content = QVBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
@@ -150,8 +145,7 @@ class VideoRow(QWidget):
             status = ""
         status_label = QLabel(status)
         status_label.setStyleSheet(
-            f"color: {t.success if watched else t.text2};"
-            "font-size: 11px; background: transparent;"
+            f"color: {t.text2}; font-size: 11px; background: transparent;"
         )
         top.addWidget(status_label)
 

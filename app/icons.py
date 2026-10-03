@@ -18,10 +18,17 @@ ICON_PATHS = {
     "skip_previous": "M6 6h2v12H6zm3.5 6l8.5 6V6z",
     "skip_next": "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z",
     "playlist_play": "M3 10h11v2H3zM3 6h11v2H3zM3 14h7v2H3zm13 0v8l6-4z",
-    "fullscreen": ("M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5z"
-                   "m12 7h3v3h2V5h-5v2zM14 19h5v-5h-2v3h-3v2z"),
-    "fullscreen_exit": ("M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3z"
-                        "m6 11h2v3h3v2h-5v-5zm7-3V5h-2v5h5V8h-3z"),
+    # 四个 5x5 角括号。fullscreen 贴角外沿（箭头朝外），
+    # fullscreen_exit 贴角内沿（箭头朝内）—— 两者互为镜像。
+    # 旧版本的路径数据有多处符号错误，画出来是歪的（角括号错位、部分跑出视野）。
+    "fullscreen": ("M5 5h5v2H7v3H5V5z"          # 左上
+                   "M14 5h5v5h-2V7h-3V5z"        # 右上
+                   "M5 14h2v3h3v2H5v-5z"         # 左下
+                   "M19 14v5h-5v-2h3v-3h2z"),    # 右下
+    "fullscreen_exit": ("M5 8h3v-3h2v5H5v-2z"        # 左上：贴下、右
+                        "M14 5h2v3h3v2h-5V5z"        # 右上：贴下、左
+                        "M5 14h5v5h-2v-3h-3v-2z"     # 左下：贴上、右
+                        "M14 14h5v2h-3v3h-2v-5z"),   # 右下：贴上、左
     "fast_forward": "M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z",
     "volume_up": ("M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 "
                   "2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 "

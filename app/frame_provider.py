@@ -36,12 +36,14 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
 from app import keyframes
+from app import prefs
 from app import thumb_strip
 from app import video_frames
 
 
 # ─── 可调参数 ─────────────────────────────────────────────
-MAX_WIDTH = 240             # 预览图最大宽度
+# 预览图宽度不再写死：由「设置 → 预览图精细度」决定（prefs.thumb_tile_width），
+# 抽帧分辨率与悬停预览窗尺寸保持一致，才不会出现「小图放大显示」的模糊。
 BUCKET_MS = 1000            # 缓存 / 预加载粒度：每秒一个桶
 CACHE_MAX = 160             # 缓存条数上限（约 20 MB）
 APPROX_BUCKETS = 3          # 未命中时允许借用最近几秒的帧
@@ -306,9 +308,11 @@ class _Worker(threading.Thread):
         return None
 
     def _decode(self, video_path: str, position_ms: int,
-                max_width: int = MAX_WIDTH) -> Optional[QImage]:
+                max_width: int = 0) -> Optional[QImage]:
         if self._stopping:
             return None
+        if max_width <= 0:
+            max_width = prefs.thumb_tile_width()
         cap = self._ensure_cap(video_path)
         if cap is None:
             return None
@@ -594,7 +598,8 @@ class _StripGenerator(threading.Thread):
         for lo, hi in ranges:
             try:
                 futures.append(pool.submit(keyframes.extract_tiles,
-                                           path, strip.times, lo, hi))
+                                           path, strip.times, lo, hi,
+                                           strip.tile_w))
             except Exception:
                 break
 
@@ -636,7 +641,7 @@ class _StripGenerator(threading.Thread):
                 if self._cancel.is_set() or self._stopping:
                     break
                 image = _read_frame_image(cap, fps, strip.times[index],
-                                          thumb_strip.TILE_W)
+                                          strip.tile_w)
                 if image is not None and strip.put_tile(index, image):
                     strip.save()
                 self._tick()

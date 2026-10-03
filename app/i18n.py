@@ -48,12 +48,25 @@ STRINGS: dict = {
     "theme_light": {"zh": " 浅色模式", "en": " Light Mode"},
     "menu_audio": {"zh": "音频", "en": "Audio"},
     "menu_language": {"zh": "语言", "en": "Language"},
+    "fullscreen_exit": {"zh": "退出全屏", "en": "Exit Fullscreen"},
     "menu_settings": {"zh": "设置", "en": "Settings"},
     "menu_thumb_interval": {"zh": "预览图间隔", "en": "Thumbnail Interval"},
     "thumb_interval_5s": {"zh": "每 5 秒", "en": "Every 5 seconds"},
     "thumb_interval_10s": {"zh": "每 10 秒", "en": "Every 10 seconds"},
     "thumb_interval_20s": {"zh": "每 20 秒", "en": "Every 20 seconds"},
     "thumb_interval_30s": {"zh": "每 30 秒", "en": "Every 30 seconds"},
+    "menu_thumb_quality": {"zh": "预览图精细度", "en": "Thumbnail Quality"},
+    "thumb_quality_sd": {"zh": "标准（240×135）", "en": "Standard (240×135)"},
+    "thumb_quality_hd": {"zh": "高清（320×180）", "en": "High (320×180)"},
+    "thumb_quality_fhd": {"zh": "超清（480×270）", "en": "Ultra (480×270)"},
+    "thumb_quality_changed": {
+        "zh": "预览图精细度已改为「{name}」。\n\n"
+              "已生成的预览图需要重新生成才会按新尺寸显示，"
+              "可在「文件 → 预加载全部预览图」重新生成。",
+        "en": "Thumbnail quality is now \"{name}\".\n\n"
+              "Existing thumbnails need to be regenerated to match; "
+              "use File → Preload All Thumbnails.",
+    },
     "thumb_interval_changed": {
         "zh": "预览图间隔已改为「{name}」。\n\n"
               "已生成的预览图需要重新生成才会按新间隔显示，"

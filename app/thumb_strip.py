@@ -24,22 +24,45 @@ from PyQt6.QtGui import QImage, QPainter, QPixmap
 
 from app import paths
 from app import prefs
-from app.video_frames import TILE_H, TILE_W
 
 
 # ─── 规格 ─────────────────────────────────────────────────
-# TILE_W / TILE_H 与抽帧模块共用同一定义（见 app/video_frames.py）
+# 单格尺寸不再固定：由「设置 → 预览图精细度」决定（见 prefs.thumb_tile_size）
 COLS = 10                   # 每行格数
 FLUSH_EVERY = 30            # 每生成多少格落盘一次
 
 
-def _thumb_dir() -> str:
+def _fallback_dir() -> str:
+    """只读目录下的兜底存放位置"""
     d = os.path.join(paths.data_dir(), "thumbs")
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:
         pass
     return d
+
+
+def _writable(folder: str) -> bool:
+    probe = os.path.join(folder, ".vsp_write_test")
+    try:
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def _thumb_dir_for(video_path: str) -> str:
+    """缩略图跟视频放在同一个文件夹里
+
+    这样把整个视频集目录拷给别人就能直接复用缓存，不必重新生成。
+    目录不可写时（只读盘、光盘、部分网络盘）退回应用数据目录，功能不受影响。
+    """
+    folder = os.path.dirname(os.path.abspath(video_path))
+    if folder and os.path.isdir(folder) and _writable(folder):
+        return folder
+    return _fallback_dir()
 
 
 def _file_key(video_path: str) -> str:
@@ -62,8 +85,12 @@ class ThumbStrip:
         self._lock = threading.Lock()
         self._save_lock = threading.Lock()
 
+        # 缓存就放在视频集文件夹里（见 _thumb_dir_for）
+        self._dir = _thumb_dir_for(video_path)
         # 间隔由用户在「设置 → 预览图间隔」里选，默认 10 秒
         self.interval_ms = prefs.thumb_interval_ms()
+        # 单格尺寸由「预览图精细度」决定；在这里定格，避免生成中途被改坏
+        self.tile_w, self.tile_h = prefs.thumb_tile_size()
         self.cols = COLS
         self.image: Optional[QImage] = None
         self.done = 0               # 已生成到的格号（+1 语义，允许跳格）
@@ -85,12 +112,21 @@ class ThumbStrip:
     # ── 状态 ────────────────────────────────────────────
 
     @property
+    def _stem(self) -> str:
+        """用视频文件名做前缀，放在视频旁边时一眼能看出是谁的缓存
+
+        文件是否过期不看名字，看元信息里的 key（含大小与修改时间），
+        所以视频换内容后会被识别为失效并覆盖重建。
+        """
+        return os.path.splitext(os.path.basename(self.video_path))[0]
+
+    @property
     def image_path(self) -> str:
-        return os.path.join(_thumb_dir(), f"{self.key}.jpg")
+        return os.path.join(self._dir, f"{self._stem}.storyboard.jpg")
 
     @property
     def meta_path(self) -> str:
-        return os.path.join(_thumb_dir(), f"{self.key}.json")
+        return os.path.join(self._dir, f"{self._stem}.storyboard.json")
 
     def is_complete(self) -> bool:
         return self.count > 0 and self.done >= self.count
@@ -121,16 +157,34 @@ class ThumbStrip:
         with self._lock:
             self.set_times(times)
             # 图尺寸必须与新时间表算出的行数一致，否则是别的参数生成的，丢弃
-            if (img.width() != TILE_W * self.cols
-                    or img.height() != TILE_H * max(1, self.rows)):
+            if (img.width() != self.tile_w * self.cols
+                    or img.height() != self.tile_h * max(1, self.rows)):
                 self.times = []
                 self.count = 0
                 self.rows = 0
-                return False
-            self.image = img
-            # 支持断点续传：已生成多少格就恢复多少格
-            self.done = min(int(meta.get("done", self.count)), self.count)
+                stale = True
+            else:
+                stale = False
+                self.image = img
+                # 支持断点续传：已生成多少格就恢复多少格
+                self.done = min(int(meta.get("done", self.count)), self.count)
+
+        if stale:
+            # 尺寸对不上 = 用户改过「预览图精细度」，这对旧图**永远**用不了。
+            # 必须删掉：否则它会一直瘫在盘上占着位置，每次启动都白读一遍，
+            # 而悬停预览只能退回按需抽帧（慢、且生成期间会被反复覆盖而卡住），
+            # 永远等不到雪碧图生效。
+            self.remove_files()
+            return False
         return True
+
+    def remove_files(self):
+        """删掉磁盘上的缓存（尺寸不符 / 需要强制重建时调用）"""
+        for path in (self.image_path, self.meta_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def save(self):
         """落盘。
@@ -144,8 +198,8 @@ class ThumbStrip:
             with self._lock:
                 if self.image is None or self.done <= 0:
                     return
-                snapshot = self.image.copy(0, 0, TILE_W * self.cols,
-                                           TILE_H * max(1, self.rows))
+                snapshot = self.image.copy(0, 0, self.tile_w * self.cols,
+                                           self.tile_h * max(1, self.rows))
                 done = self.done
                 self._unflushed = 0
             snapshot.save(self.image_path, "JPEG", 85)
@@ -155,8 +209,8 @@ class ThumbStrip:
                     "interval_ms": self.interval_ms,
                     "count": self.count,
                     "done": done,
-                    "tile_w": TILE_W,
-                    "tile_h": TILE_H,
+                    "tile_w": self.tile_w,
+                    "tile_h": self.tile_h,
                     "cols": self.cols,
                     # 每格真实时间戳：关键帧锚定后间隔不再均匀，必须落盘
                     "times": self.times,
@@ -174,15 +228,16 @@ class ThumbStrip:
             return False
         with self._lock:
             if self.image is None:
-                img = QImage(TILE_W * self.cols, TILE_H * max(1, self.rows),
+                img = QImage(self.tile_w * self.cols,
+                             self.tile_h * max(1, self.rows),
                              QImage.Format.Format_RGB888)
                 img.fill(Qt.GlobalColor.black)
                 self.image = img
-            scaled = tile.scaled(TILE_W, TILE_H,
+            scaled = tile.scaled(self.tile_w, self.tile_h,
                                  Qt.AspectRatioMode.KeepAspectRatio,
-                                 Qt.TransformationMode.FastTransformation)
-            x = (index % self.cols) * TILE_W
-            y = (index // self.cols) * TILE_H
+                                 Qt.TransformationMode.SmoothTransformation)
+            x = (index % self.cols) * self.tile_w
+            y = (index // self.cols) * self.tile_h
             painter = QPainter(self.image)
             painter.drawImage(x, y, scaled)
             painter.end()
@@ -205,6 +260,7 @@ class ThumbStrip:
         with self._lock:
             if self.image is None or index >= self.done:
                 return None
-            x = (index % self.cols) * TILE_W
-            y = (index // self.cols) * TILE_H
-            return QPixmap.fromImage(self.image.copy(x, y, TILE_W, TILE_H))
+            x = (index % self.cols) * self.tile_w
+            y = (index // self.cols) * self.tile_h
+            return QPixmap.fromImage(self.image.copy(x, y,
+                                                     self.tile_w, self.tile_h))

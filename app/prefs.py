@@ -55,3 +55,41 @@ def set_thumb_interval(name: str):
 def thumb_interval_ms() -> int:
     """当前档位对应的间隔（毫秒）"""
     return _THUMB_INTERVALS[thumb_interval_name()]
+
+
+# ─── 预览图精细度 ─────────────────────────────────────────
+THUMB_QUALITY_KEY = "thumb_quality"
+
+# 档位名 → (单格宽, 单格高)
+#
+# 这个尺寸既是抽帧分辨率，也是悬停预览窗的大小 —— 两者必须一致。
+# 早先抽的是 160×90，却塞进 240×135 的预览窗里放大 1.5 倍显示，所以糊；
+# 现在窗口跟随档位，图的像素直接铺满窗口，像素级清晰。
+THUMB_QUALITIES = (
+    ("sd", 240, 135),
+    ("hd", 320, 180),
+    ("fhd", 480, 270),
+)
+DEFAULT_THUMB_QUALITY = "hd"
+
+_QUALITY_SIZES: Dict[str, tuple] = {n: (w, h) for n, w, h in THUMB_QUALITIES}
+
+
+def thumb_quality_name() -> str:
+    """当前精细度档位名"""
+    value = get(THUMB_QUALITY_KEY, DEFAULT_THUMB_QUALITY)
+    return value if value in _QUALITY_SIZES else DEFAULT_THUMB_QUALITY
+
+
+def set_thumb_quality(name: str):
+    if name in _QUALITY_SIZES:
+        set_value(THUMB_QUALITY_KEY, name)
+
+
+def thumb_tile_size() -> tuple:
+    """当前档位对应的单格尺寸（宽, 高）"""
+    return _QUALITY_SIZES[thumb_quality_name()]
+
+
+def thumb_tile_width() -> int:
+    return thumb_tile_size()[0]

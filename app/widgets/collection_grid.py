@@ -178,7 +178,9 @@ class CollectionCard(BaseCard):
         ic.setPixmap(icons.make_pixmap(icon_name, color, 14))
         bl.addWidget(ic)
         tx = QLabel(text)
-        tx.setStyleSheet(f"color: {color}; font-size: 11px; background: transparent;")
+        # 角标底色是半透明黑，文字统一用白色才清楚；
+        # 状态由左侧图标区分，文字不再跟着变色
+        tx.setStyleSheet("color: #FFFFFF; font-size: 11px; background: transparent;")
         bl.addWidget(tx)
         self._badge.adjustSize()
         self._badge.move(16, COVER_H - self._badge.height() + 4)
@@ -288,11 +290,14 @@ class CollectionGrid(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_group_id: Optional[int] = None
+        # 当前展示的搜索词。窗口尺寸变化时需要按「当前视图」重排，
+        # 早先一律调 load()，搜索结果显示 150ms 后就会被根视图覆盖掉。
+        self._search_keyword: str = ""
         self._cards: List[BaseCard] = []
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(150)
-        self._resize_timer.timeout.connect(lambda: self.load(self._current_group_id))
+        self._resize_timer.timeout.connect(self._reload_current)
         # 拖拽状态
         self._drag_active = False
         self._drag_src_data: Optional[Tuple[str, int]] = None
@@ -561,8 +566,56 @@ class CollectionGrid(QScrollArea):
 
     # ─── 加载与渲染 ─────────────────────────────────
 
+    def _reload_current(self):
+        """按当前视图（搜索结果 / 分组 / 根）重建"""
+        if self._search_keyword:
+            self.load_search(self._search_keyword)
+        else:
+            self.load(self._current_group_id)
+
+    def _connect_collection_card(self, card: CollectionCard):
+        """统一接线：三处建卡的地方都用它，避免漏掉某个信号"""
+        cid = card._collection_id
+        card.clicked.connect(lambda _, c=cid: self.collection_selected.emit(c))
+        card.delete_requested.connect(self._delete_collection)
+        card.setcover_requested.connect(self._set_cover)
+        card.extractframe_requested.connect(self._extract_first_frame)
+        card.rename_requested.connect(self._rename_collection)
+        card.new_group_with_collection_requested.connect(self._create_group)
+        card.move_to_group_requested.connect(self._move_to_group)
+        card.remove_from_group_requested.connect(self._remove_from_group)
+
+    def refresh_collection(self, collection_id: int) -> bool:
+        """只重建某一张视频集卡片（观看进度变了，没必要整页重建）
+
+        返回 False 表示这张卡当前不在视图里（比如它在某个分组内，而此刻停在根层），
+        此时也没有任何需要更新的东西。
+        """
+        for i, card in enumerate(self._cards):
+            if card.drag_data() != ("collection", collection_id):
+                continue
+            collections = db.get_all_collections()
+            col = next((c for c in collections if c["id"] == collection_id), None)
+            idx = self._layout.indexOf(card)
+            if col is None or idx < 0:
+                return True
+            row, column, rs, cs = self._layout.getItemPosition(idx)
+            self._layout.removeWidget(card)
+            card.deleteLater()
+            stats = db.get_all_collection_stats().get(collection_id)
+            new_card = CollectionCard(col, stats)
+            self._connect_collection_card(new_card)
+            self._cards[i] = new_card
+            self._layout.addWidget(
+                new_card, row, column, rs, cs,
+                alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            new_card.show()
+            return True
+        return False
+
     def load(self, group_id: Optional[int] = None):
         self._current_group_id = group_id
+        self._search_keyword = ""
         self._clear_layout()
         self._cards.clear()
         t = theme.get()
@@ -611,14 +664,7 @@ class CollectionGrid(QScrollArea):
                     card.setcover_group_requested.connect(self._set_group_cover)
                 else:
                     card = CollectionCard(data, stats_map.get(data["id"]))
-                    card.clicked.connect(lambda _, cid=data["id"]: self.collection_selected.emit(cid))
-                    card.delete_requested.connect(self._delete_collection)
-                    card.setcover_requested.connect(self._set_cover)
-                    card.extractframe_requested.connect(self._extract_first_frame)
-                    card.rename_requested.connect(self._rename_collection)
-                    card.new_group_with_collection_requested.connect(self._create_group)
-                    card.move_to_group_requested.connect(self._move_to_group)
-                    card.remove_from_group_requested.connect(self._remove_from_group)
+                    self._connect_collection_card(card)
                 self._cards.append(card)
                 self._layout.addWidget(card, row + i // cols, i % cols,
                                        alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
@@ -626,14 +672,7 @@ class CollectionGrid(QScrollArea):
             cols_in = db.get_group_collections(group_id)
             for i, col in enumerate(cols_in):
                 card = CollectionCard(col, stats_map.get(col["id"]))
-                card.clicked.connect(lambda _, cid=col["id"]: self.collection_selected.emit(cid))
-                card.delete_requested.connect(self._delete_collection)
-                card.setcover_requested.connect(self._set_cover)
-                card.extractframe_requested.connect(self._extract_first_frame)
-                card.rename_requested.connect(self._rename_collection)
-                card.new_group_with_collection_requested.connect(self._create_group)
-                card.move_to_group_requested.connect(self._move_to_group)
-                card.remove_from_group_requested.connect(self._remove_from_group)
+                self._connect_collection_card(card)
                 self._cards.append(card)
                 self._layout.addWidget(card, row + i // cols, i % cols,
                                        alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
@@ -650,6 +689,7 @@ class CollectionGrid(QScrollArea):
     def load_search(self, keyword: str):
         """显示搜索结果：匹配的视频集 + 匹配的视频文件名"""
         self._current_group_id = None
+        self._search_keyword = keyword.strip()
         self._clear_layout()
         self._cards.clear()
         t = theme.get()
@@ -673,14 +713,7 @@ class CollectionGrid(QScrollArea):
         if collections:
             for i, c in enumerate(collections):
                 card = CollectionCard(c, stats_map.get(c["id"]))
-                card.clicked.connect(lambda _, cid=c["id"]: self.collection_selected.emit(cid))
-                card.delete_requested.connect(self._delete_collection)
-                card.setcover_requested.connect(self._set_cover)
-                card.extractframe_requested.connect(self._extract_first_frame)
-                card.rename_requested.connect(self._rename_collection)
-                card.new_group_with_collection_requested.connect(self._create_group)
-                card.move_to_group_requested.connect(self._move_to_group)
-                card.remove_from_group_requested.connect(self._remove_from_group)
+                self._connect_collection_card(card)
                 self._cards.append(card)
                 self._layout.addWidget(card, row + i // cols, i % cols,
                                        alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)

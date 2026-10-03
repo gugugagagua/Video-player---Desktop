@@ -16,9 +16,11 @@
 import cv2
 
 
-# 与 thumb_strip 保持一致的格子规格
-TILE_W = 160
-TILE_H = 90
+# 单格尺寸的兜底默认值。
+# 实际尺寸由用户在「设置 → 预览图精细度」里选（见 prefs.thumb_tile_size），
+# 通过参数传进来 —— 这些常量只作为函数签名的默认值，不参与实际决策。
+TILE_W = 320
+TILE_H = 180
 MAX_TILES = 1200            # 硬上限：超长视频会自动放宽间隔，避免雪碧图过大
 
 
@@ -113,11 +115,12 @@ def grab_tile_rgb(cap, fps: float, position_ms: int, max_width: int = TILE_W):
 
 # ─── 子进程入口 ───────────────────────────────────────────
 
-def extract_tiles(video_path: str, times, start: int, stop: int):
+def extract_tiles(video_path: str, times, start: int, stop: int,
+                  tile_w: int = TILE_W):
     """【子进程任务】抽取 [start, stop) 这几格的画面（OpenCV 实现）
 
-    times 是每格的真实时间戳（毫秒）。参数与返回值都必须可 pickle，
-    返回 [(格号, 宽, 高, RGB 字节), ...]。
+    times 是每格的真实时间戳（毫秒），tile_w 是目标单格宽度。
+    参数与返回值都必须可 pickle，返回 [(格号, 宽, 高, RGB 字节), ...]。
 
     这是 PyAV 不可用时的退路：OpenCV 的 set(POS_FRAMES) 会先 seek 到关键帧
     再逐帧解码追到目标帧，慢很多，但结果一致。
@@ -130,7 +133,7 @@ def extract_tiles(video_path: str, times, start: int, stop: int):
         fps = 25.0
     out = []
     for index in range(int(start), int(stop)):
-        item = grab_tile_rgb(cap, fps, int(times[index]))
+        item = grab_tile_rgb(cap, fps, int(times[index]), tile_w)
         if item is not None:
             out.append((index, item[0], item[1], item[2]))
     return out

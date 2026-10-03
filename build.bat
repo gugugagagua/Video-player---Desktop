@@ -7,10 +7,18 @@ echo.
 
 cd /d "%~dp0"
 
+if not exist "libmpv\libmpv-2.dll" (
+  echo [错误] 缺少 libmpv\libmpv-2.dll
+  echo        获取方式见 README 的「依赖准备」一节。
+  pause
+  exit /b 1
+)
+
 .venv\Scripts\pyinstaller --noconfirm --clean -w ^
   --name "视频集播放器" ^
   --icon app_icon.ico ^
   --version-file version_info.txt ^
+  --add-binary "libmpv\libmpv-2.dll;." ^
   --hidden-import PyQt6.QtMultimedia ^
   --hidden-import PyQt6.QtMultimediaWidgets ^
   --hidden-import PyQt6.QtSvg ^

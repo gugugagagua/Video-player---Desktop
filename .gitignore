@@ -17,6 +17,10 @@ installer_output/
 data/
 .covers/
 
+# libmpv 运行时（115MB 二进制，不放进版本库）
+# 获取方式见 README「依赖准备」
+libmpv/
+
 # IDE
 .idea/
 .vscode/
