@@ -31,7 +31,7 @@ import time
 from collections import OrderedDict
 from typing import Optional, Tuple
 
-import cv2
+from app.lazy_cv2 import cv2   # 延迟加载，别让 cv2 拖慢启动（见该模块说明）
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 

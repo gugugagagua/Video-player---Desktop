@@ -34,7 +34,7 @@ PyAV 不可用时全部退回 OpenCV 的等间隔方案，功能不受影响，�
 import bisect
 from typing import List, Optional, Tuple
 
-import cv2
+from app.lazy_cv2 import cv2   # 延迟加载，别让 cv2 拖慢启动（见该模块说明）
 
 from app.video_frames import MAX_TILES, TILE_W
 

@@ -1,15 +1,21 @@
 """封面管理 - 提取视频首帧、图片缩放与格式转换"""
 
 import os
-import cv2
-from PIL import Image
 from typing import Optional
 
 from app import database as db
 
+# cv2 / PIL 刻意延迟到函数内部导入。
+# cv2 加载约 166 ms、PIL 也要几十毫秒，而它们只在「首次给视频集生成封面」
+# 这条路用得上；放在模块顶层，会让每一次启动都白付这笔钱
+# （collection_grid 在顶层就 import 了本模块）。
+
 
 def extract_first_frame(video_path: str, output_path: str) -> Optional[str]:
     """提取视频首帧并保存为封面图（保持原分辨率）"""
+    import cv2
+    from PIL import Image
+
     cap = cv2.VideoCapture(video_path)
     success, frame = cap.read()
     cap.release()
@@ -25,6 +31,7 @@ def extract_first_frame(video_path: str, output_path: str) -> Optional[str]:
 def save_imported_cover(source_path: str, output_path: str) -> Optional[str]:
     """将来源图片原分辨率转为 PNG 保存为 cover.png"""
     try:
+        from PIL import Image
         img = Image.open(source_path)
         img.save(output_path, "PNG")
         return output_path

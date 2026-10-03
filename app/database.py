@@ -313,10 +313,36 @@ def get_collection_stats(collection_id: int) -> dict:
 
 
 def get_all_collection_stats() -> dict:
-    """批量返回所有视频集的统计：{collection_id: {watched,total,progress}}"""
+    """批量返回所有视频集的统计：{collection_id: {watched,total,progress}}
+
+    用**一条 GROUP BY 查询**算完，不再逐集去查。
+    原来是 1+N 次查询（每集一次开连接 + SELECT），而搜索框每敲一个键
+    都会调用本函数，库一大就明显卡顿。
+
+    已看完的判定与 _is_watched 保持一致：
+        last_position > 0 且 duration > 0 且 last_position >= duration*1000*0.95
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT collection_id,
+               COUNT(*) AS total,
+               SUM(CASE WHEN last_position > 0 AND duration > 0
+                         AND last_position >= duration * 950
+                        THEN 1 ELSE 0 END) AS watched
+        FROM videos
+        GROUP BY collection_id
+    """)
     result: dict = {}
-    for c in get_all_collections():
-        result[c["id"]] = get_collection_stats(c["id"])
+    for row in cursor.fetchall():
+        total = row["total"] or 0
+        watched = row["watched"] or 0
+        result[row["collection_id"]] = {
+            "watched": watched,
+            "total": total,
+            "progress": (watched / total) if total else 0.0,
+        }
+    conn.close()
     return result
 
 

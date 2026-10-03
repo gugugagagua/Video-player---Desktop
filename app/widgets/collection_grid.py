@@ -23,6 +23,38 @@ COVER_H = 230
 CARD_W = 200
 CARD_H = 310
 
+# 封面缩放结果缓存
+#
+# 卡片每次重建都要 `QPixmap(封面) + 平滑缩放`，而搜索框每敲一个键就会整页
+# 重建一次 —— 同一张封面被反复解码、反复做 SmoothTransformation，完全是白费。
+# 按「路径 + 修改时间 + 目标尺寸」做键，图换了自动失效。
+# 上限 64 张（184×230×4B ≈ 169 KB/张，约 11 MB）。
+_COVER_CACHE: dict = {}
+_COVER_CACHE_MAX = 64
+
+
+def _cover_pixmap(path, width: int, height: int):
+    """读取并缩放封面；同一张图只解码一次"""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        key = (path, os.path.getmtime(path), width, height)
+    except OSError:
+        return None
+    cached = _COVER_CACHE.get(key)
+    if cached is not None:
+        return cached
+    src = QPixmap(path)
+    if src.isNull():
+        return None
+    pix = src.scaled(width, height,
+                     Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+    if len(_COVER_CACHE) >= _COVER_CACHE_MAX:
+        _COVER_CACHE.pop(next(iter(_COVER_CACHE)))
+    _COVER_CACHE[key] = pix
+    return pix
+
 
 class BaseCard(QWidget):
     """卡片基类"""
@@ -56,12 +88,8 @@ class BaseCard(QWidget):
         self._cover.setFixedSize(COVER_W, COVER_H)
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setStyleSheet(f"background: {t.input_bg}; border-radius: 6px;")
-        if self._cover_path and os.path.exists(self._cover_path):
-            pix = QPixmap(self._cover_path).scaled(
-                COVER_W, COVER_H,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        pix = _cover_pixmap(self._cover_path, COVER_W, COVER_H)
+        if pix is not None:
             self._cover.setPixmap(pix)
         layout.addWidget(self._cover, alignment=Qt.AlignmentFlag.AlignCenter)
         self._name_label = QLabel(self._name)

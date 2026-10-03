@@ -2,7 +2,7 @@
 # Video Set Player (Windows Desktop)
 #This software was developed with AI assistance
 
-**Current version: 1.7.1**
+**Current version: 1.7.2**
 
 > The Android version lives in a separate repository [https://github.com/gugugagagua/Video-player]
 
@@ -44,8 +44,8 @@ Get the latest version from the [Releases](../../releases) page:
 
 | Download | Description |
 |---|---|
-| **`Video-Set-Player-1.7.1.exe`** | Installer (recommended); installs to `C:\Program Files\视频集播放器` by default |
-| **`Video-Set-Player-1.7.1.zip`** | Portable, no installation needed — just extract and run |
+| **`Video-Set-Player-1.7.2.exe`** | Installer (recommended); installs to `C:\Program Files\视频集播放器` by default |
+| **`Video-Set-Player-1.7.2.zip`** | Portable, no installation needed — just extract and run |
 
 **Installer**: double-click it and follow the wizard, then launch from the Start menu or the desktop shortcut.
 

@@ -35,6 +35,11 @@ SEEK_STEP_MS = 5000
 # 沉浸模式下：鼠标进入屏幕右侧这么宽的范围内，滑出视频列表
 IMMERSIVE_EDGE_PX = 100
 
+# 搜索防抖：输入过程中不重建，停顿这么久之后才重建一次。
+# 重建要清空并重新创建所有卡片（含封面解码，见 collection_grid），
+# 每敲一个键都做一遍会明显发粘。
+SEARCH_DEBOUNCE_MS = 160
+
 # 长按超过这么多毫秒才算「加速」，否则算「短按快进」
 LONG_PRESS_MS = 400
 
@@ -53,6 +58,12 @@ class MainWindow(QMainWindow):
         self._immersive_watch = QTimer(self)
         self._immersive_watch.setInterval(60)
         self._immersive_watch.timeout.connect(self._poll_immersive_edge)
+        # 搜索防抖：见 SEARCH_DEBOUNCE_MS 的说明
+        self._search_text = ""
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(self._run_search)
         self._init_db()
         self._setup_theme()
         self._setup_ui()
@@ -747,8 +758,13 @@ class MainWindow(QMainWindow):
         self._open_collection(collection_id, video_id)
 
     def _on_search_changed(self, text: str):
-        """搜索框内容变化"""
-        self._grid.load_search(text)
+        """搜索框内容变化（防抖：连续输入只在停下来后重建一次）"""
+        self._search_text = text
+        self._search_debounce.start()
+
+    def _run_search(self):
+        """真正执行搜索（由防抖定时器触发）"""
+        self._grid.load_search(self._search_text)
 
     def _set_playback_rate(self, rate: float):
         self._player.set_playback_rate(rate)

@@ -12,17 +12,30 @@ from typing import Optional
 
 APP_DIR_NAME = "视频集播放器"
 
+# 可写标记文件。留着它当"通行证"，是有意为之 —— 见 _is_writable 的说明
+_WRITABLE_MARK = ".writable"
+
 _cached_dir: Optional[str] = None
 
 
 def _is_writable(path: str) -> bool:
-    """目录可创建且可写入"""
+    """目录可创建且可写入
+
+    刻意**不再用「建临时文件再删掉」的写法**：实测在本机上写一个文件只要
+    1 ms，删掉它却要 340~470 ms（杀软 / 文件过滤驱动会拦截删除），而同一条
+    删除在系统临时目录只要 2 ms。这个探测每次启动都要走一遍，等于白等半秒。
+
+    改成留一个 0 字节的标记文件当"通行证"：第一次写进去，之后每次启动直接
+    命中「已存在」分支，**一次写盘都不会发生**。标记文件落在数据目录里，
+    和 videos.db 作伴，不对外暴露。
+    """
+    marker = os.path.join(path, _WRITABLE_MARK)
+    if os.path.exists(marker):
+        return True
     try:
         os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".write_probe")
-        with open(probe, "w", encoding="utf-8") as f:
-            f.write("")
-        os.remove(probe)
+        with open(marker, "w", encoding="utf-8"):
+            pass
         return True
     except OSError:
         return False

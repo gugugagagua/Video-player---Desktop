@@ -13,7 +13,7 @@
 不必反复打开文件。
 """
 
-import cv2
+from app.lazy_cv2 import cv2   # 延迟加载，别让 cv2 拖慢启动（见该模块说明）
 
 
 # 单格尺寸的兜底默认值。
